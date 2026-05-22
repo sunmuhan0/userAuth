@@ -19,9 +19,11 @@ func (r *Router) Setup() *gin.Engine {
 
 	authHandler := &handler.AuthHandler{}
 	authFilter := &filter.AuthFilter{}
+	publicFilter := &filter.PublicFilter{}
 
 	// ========== 公开路由组（无需鉴权） ==========
 	publicGroup := r.Engine.Group("/api/v1")
+	publicGroup.Use(publicFilter.Filter)
 	{
 		publicGroup.POST("/register", authHandler.Register)
 		publicGroup.POST("/login", authHandler.Login)
@@ -30,6 +32,7 @@ func (r *Router) Setup() *gin.Engine {
 
 	// ========== 需要Bearer Token鉴权的路由组 ==========
 	authGroup := r.Engine.Group("/api/v1")
+	authGroup.Use(publicFilter.Filter)
 	authGroup.Use(authFilter.Filter)
 	{
 		authGroup.POST("/logout", authHandler.Logout)

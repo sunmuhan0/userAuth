@@ -20,15 +20,14 @@ var (
 )
 
 // Init 从inji容器中获取ServiceProvider单例
-func Init() error {
+func Init() {
 	obj, ok := inji.Find("serviceProvider")
 	if !ok {
-		return nil
+		panic("[proc] serviceProvider not found in inji container")
 	}
 	once.Do(func() {
 		instance = obj.(*ServiceProvider)
 	})
-	return nil
 }
 
 // Get 获取ServiceProvider单例

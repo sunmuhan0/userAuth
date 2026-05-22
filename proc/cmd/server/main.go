@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/teou/inji"
 
@@ -21,10 +23,7 @@ func main() {
 
 	// ========== 注册ServiceProvider ==========
 	inji.Reg("serviceProvider", (*sp.ServiceProvider)(nil))
-	err := sp.Init()
-	if err != nil {
-		panic("service provider init fail!")
-	}
+	sp.Init()
 
 	// ========== 配置路由 ==========
 	httpPort := getEnv("HTTP_PORT", "8080")
@@ -44,12 +43,17 @@ func main() {
 		}
 	}()
 
-	// ========== 关闭 ==========
+	// ========== 优雅关闭 ==========
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	fmt.Println("\n[proc] shutting down...")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("[proc] server shutdown error: %v", err)
+	}
 	fmt.Println("[proc] stopped")
 }
 

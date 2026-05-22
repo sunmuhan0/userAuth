@@ -32,7 +32,7 @@ var (
 func Init() {
 	obj, ok := inji.Find("serviceProvider")
 	if !ok {
-		return
+		panic("[auth-server] serviceProvider not found in inji container")
 	}
 	once.Do(func() {
 		instance = obj.(*ServiceProvider)

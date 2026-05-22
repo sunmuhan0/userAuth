@@ -81,7 +81,7 @@ func TestLoginNonexistentUser(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	_, _, _, _, err := svc.Login(ctx, "nouser", "pass")
+	_, _, _, _, err := svc.Login(ctx, "nouser", "pass123")
 	if err != ErrInvalidCredentials {
 		t.Fatalf("expected ErrInvalidCredentials, got %v", err)
 	}
@@ -91,8 +91,8 @@ func TestRegisterDuplicate(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	_, _ = svc.Register(ctx, "dup", "pass", "", "")
-	_, err := svc.Register(ctx, "dup", "pass", "", "")
+	_, _ = svc.Register(ctx, "dup", "pass123", "", "")
+	_, err := svc.Register(ctx, "dup", "pass123", "", "")
 	if err != ErrUserAlreadyExists {
 		t.Fatalf("expected ErrUserAlreadyExists, got %v", err)
 	}
@@ -102,8 +102,8 @@ func TestValidateToken(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	_, _ = svc.Register(ctx, "user1", "pass", "", "")
-	accessToken, _, _, _, _ := svc.Login(ctx, "user1", "pass")
+	_, _ = svc.Register(ctx, "user1", "pass123", "", "")
+	accessToken, _, _, _, _ := svc.Login(ctx, "user1", "pass123")
 
 	claims, err := svc.ValidateToken(ctx, accessToken)
 	if err != nil {
@@ -118,8 +118,8 @@ func TestLogoutInvalidatesToken(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	_, _ = svc.Register(ctx, "user1", "pass", "", "")
-	accessToken, refreshToken, _, _, _ := svc.Login(ctx, "user1", "pass")
+	_, _ = svc.Register(ctx, "user1", "pass123", "", "")
+	accessToken, refreshToken, _, _, _ := svc.Login(ctx, "user1", "pass123")
 
 	// 注销
 	err := svc.Logout(ctx, accessToken, refreshToken)
@@ -138,8 +138,8 @@ func TestRefreshToken(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	_, _ = svc.Register(ctx, "user1", "pass", "", "")
-	_, refreshToken, _, _, _ := svc.Login(ctx, "user1", "pass")
+	_, _ = svc.Register(ctx, "user1", "pass123", "", "")
+	_, refreshToken, _, _, _ := svc.Login(ctx, "user1", "pass123")
 
 	// 续签
 	newAccess, newRefresh, expiresAt, err := svc.RefreshToken(ctx, refreshToken)
@@ -164,7 +164,7 @@ func TestGetUserInfo(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	user, _ := svc.Register(ctx, "info_user", "pass", "Nick", "nick@test.com")
+	user, _ := svc.Register(ctx, "info_user", "pass123", "Nick", "nick@test.com")
 
 	got, err := svc.GetUserInfo(ctx, user.ID)
 	if err != nil {
@@ -179,7 +179,7 @@ func TestUpdateUserInfo(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	user, _ := svc.Register(ctx, "upd_user", "pass", "Old", "old@test.com")
+	user, _ := svc.Register(ctx, "upd_user", "pass123", "Old", "old@test.com")
 
 	updated, err := svc.UpdateUserInfo(ctx, user.ID, "New", "new@test.com", "")
 	if err != nil {

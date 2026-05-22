@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -16,6 +17,9 @@ var (
 	ErrUserNotFound       = errors.New("user not found")
 	ErrUserAlreadyExists  = errors.New("username already exists")
 	ErrTokenBlacklisted   = errors.New("token has been revoked")
+	ErrPasswordTooShort   = errors.New("password must be at least 6 characters")
+	ErrPasswordTooLong    = errors.New("password must not exceed 72 characters")
+	ErrUsernameTooLong    = errors.New("username must not exceed 64 characters")
 )
 
 // AuthServiceImpl 认证服务实现
@@ -27,6 +31,17 @@ type AuthServiceImpl struct {
 
 // Register 用户注册
 func (s *AuthServiceImpl) Register(ctx context.Context, username, password, nickname, email string) (*model.User, error) {
+	// 输入校验
+	if len(username) > 64 {
+		return nil, ErrUsernameTooLong
+	}
+	if len(password) < 6 {
+		return nil, ErrPasswordTooShort
+	}
+	if len(password) > 72 {
+		return nil, ErrPasswordTooLong
+	}
+
 	// bcrypt 加密密码
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -73,13 +88,17 @@ func (s *AuthServiceImpl) Logout(ctx context.Context, accessToken, refreshToken 
 	if accessToken != "" {
 		claims, err := s.TokenMgr.Parse(accessToken)
 		if err == nil {
-			_ = s.TokenDAO.Add(ctx, accessToken, claims.ExpiresAt.Unix())
+			if err := s.TokenDAO.Add(ctx, accessToken, claims.ExpiresAt.Unix()); err != nil {
+				return fmt.Errorf("failed to blacklist access token: %w", err)
+			}
 		}
 	}
 	if refreshToken != "" {
 		claims, err := s.TokenMgr.ParseRefresh(refreshToken)
 		if err == nil {
-			_ = s.TokenDAO.Add(ctx, refreshToken, claims.ExpiresAt.Unix())
+			if err := s.TokenDAO.Add(ctx, refreshToken, claims.ExpiresAt.Unix()); err != nil {
+				return fmt.Errorf("failed to blacklist refresh token: %w", err)
+			}
 		}
 	}
 	return nil
@@ -135,7 +154,9 @@ func (s *AuthServiceImpl) RefreshToken(ctx context.Context, refreshTokenStr stri
 	}
 
 	// 旧refresh token加入黑名单（轮转）
-	_ = s.TokenDAO.Add(ctx, refreshTokenStr, claims.ExpiresAt.Unix())
+	if err := s.TokenDAO.Add(ctx, refreshTokenStr, claims.ExpiresAt.Unix()); err != nil {
+		return "", "", 0, fmt.Errorf("failed to blacklist old refresh token: %w", err)
+	}
 
 	newAccessToken, expiresAt, err := s.TokenMgr.Generate(claims.UserID, claims.Username)
 	if err != nil {

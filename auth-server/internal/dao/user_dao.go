@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -137,11 +138,6 @@ func isDuplicateEntry(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	for i := 0; i <= len(s)-4; i++ {
-		if s[i:i+4] == "1062" {
-			return true
-		}
-	}
-	return false
+	// MySQL error 1062: Duplicate entry
+	return strings.Contains(err.Error(), "1062")
 }

@@ -173,7 +173,7 @@ func (c *BaseMysqlClient) ExecTransaction(transactionExec TransactionExec) (int6
 // updateFields: 冲突时更新的字段列表（为空则不加 ON DUPLICATE KEY UPDATE）
 // ignoreFields: 插入时跳过的字段（如自增主键）
 func (c *BaseMysqlClient) InsertOrUpdateOnDup(tableName string, d interface{}, updateFields []string, ignoreFields ...string) (int64, error) {
-	columns, _, args := c.structToColumnsValues(d, ignoreFields)
+	columns, args := c.structToColumnsValues(d, ignoreFields)
 
 	placeholders := make([]string, len(columns))
 	for i := range columns {
@@ -200,7 +200,7 @@ func (c *BaseMysqlClient) InsertOrUpdateOnDup(tableName string, d interface{}, u
 
 // Add 简单插入
 func (c *BaseMysqlClient) Add(tableName string, d interface{}, ondupUpdate bool) error {
-	columns, _, args := c.structToColumnsValues(d, nil)
+	columns, args := c.structToColumnsValues(d, nil)
 
 	placeholders := make([]string, len(columns))
 	for i := range columns {
@@ -225,7 +225,7 @@ func (c *BaseMysqlClient) Add(tableName string, d interface{}, ondupUpdate bool)
 // AddAndRetLastId 插入并返回自增主键ID
 // ignoreFields: 插入时跳过的字段（如自增主键本身）
 func (c *BaseMysqlClient) AddAndRetLastId(tableName string, d interface{}, ignoreFields ...string) (int64, error) {
-	columns, _, args := c.structToColumnsValues(d, ignoreFields)
+	columns, args := c.structToColumnsValues(d, ignoreFields)
 
 	placeholders := make([]string, len(columns))
 	for i := range columns {
@@ -243,7 +243,7 @@ func (c *BaseMysqlClient) AddAndRetLastId(tableName string, d interface{}, ignor
 }
 
 // structToColumnsValues struct转列名和值
-func (c *BaseMysqlClient) structToColumnsValues(d interface{}, ignoreFields []string) ([]string, []interface{}, []interface{}) {
+func (c *BaseMysqlClient) structToColumnsValues(d interface{}, ignoreFields []string) ([]string, []interface{}) {
 	v := reflect.ValueOf(d)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
@@ -271,7 +271,7 @@ func (c *BaseMysqlClient) structToColumnsValues(d interface{}, ignoreFields []st
 		values = append(values, v.Field(i).Interface())
 	}
 
-	return columns, values, values
+	return columns, values
 }
 
 // scanRows 将结果映射到struct列表

@@ -3,7 +3,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -31,16 +31,16 @@ func TestMain(m *testing.M) {
 	exec.Command("go", "build", "-o", "/tmp/e2e_proc", "./cmd/server/").
 		Run()
 
-	// 启动 auth-server
+	// 启动 auth-server (e2e 目录在 proc/e2e，向上两级是项目根目录)
 	cmd1 := exec.Command("/tmp/e2e_auth_server")
-	cmd1.Dir = "/home/xiaomi/p-sunyexiao/Documents/ttuser/auth-server"
+	cmd1.Dir = "../.." + "/auth-server"
 	cmd1.Start()
 	authServerProcess = cmd1.Process
 	time.Sleep(2 * time.Second)
 
 	// 启动 proc
 	cmd2 := exec.Command("/tmp/e2e_proc")
-	cmd2.Dir = "/home/xiaomi/p-sunyexiao/Documents/ttuser/proc"
+	cmd2.Dir = ".."
 	cmd2.Start()
 	procProcess = cmd2.Process
 	time.Sleep(2 * time.Second)
@@ -238,7 +238,7 @@ func doRequest(t *testing.T, method, path, token string, body interface{}) map[s
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := ioutil.ReadAll(resp.Body)
+	respBody, _ := io.ReadAll(resp.Body)
 	var result map[string]interface{}
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		t.Fatalf("failed to parse response: %v, body: %s", err, string(respBody))
