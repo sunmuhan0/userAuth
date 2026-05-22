@@ -27,10 +27,10 @@ e2e-test: build
 	@echo "[e2e] preparing database..."
 	@mysql -u root -p123456 ttuser -e "TRUNCATE TABLE users; TRUNCATE TABLE token_blacklist;" 2>/dev/null || true
 	@echo "[e2e] starting auth-server..."
-	@$(BIN_DIR)/auth-server > /dev/null 2>&1 & echo $$! > /tmp/e2e_auth_server.pid
+	@cd auth-server && ../$(BIN_DIR)/auth-server > /dev/null 2>&1 & echo $$! > /tmp/e2e_auth_server.pid
 	@sleep 2
 	@echo "[e2e] starting proc..."
-	@$(BIN_DIR)/proc > /dev/null 2>&1 & echo $$! > /tmp/e2e_proc.pid
+	@cd proc && ../$(BIN_DIR)/proc > /dev/null 2>&1 & echo $$! > /tmp/e2e_proc.pid
 	@sleep 2
 	@echo "[e2e] running e2e tests..."
 	@cd proc && go test ./e2e/ -v -count=1 -run "TestE2E" -timeout=30s; \

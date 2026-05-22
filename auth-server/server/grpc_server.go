@@ -7,6 +7,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
 	pb "ttuser/auth-client/auth"
@@ -14,7 +15,11 @@ import (
 	"ttuser/auth-server/internal/service"
 )
 
-const defaultPort = 9090
+const (
+	defaultPort    = 9090
+	defaultCert    = "../certs/server.pem"     // TODO: 后续从配置中心获取
+	defaultCertKey = "../certs/server-key.pem" // TODO: 后续从配置中心获取
+)
 
 // AuthGRPCServer gRPC服务端实现
 type AuthGRPCServer struct {
@@ -23,7 +28,7 @@ type AuthGRPCServer struct {
 	server      *grpc.Server
 }
 
-// Run 启动gRPC服务
+// Run 启动gRPC服务（带TLS）
 func (s *AuthGRPCServer) Run() error {
 	port := defaultPort
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
@@ -31,10 +36,16 @@ func (s *AuthGRPCServer) Run() error {
 		return fmt.Errorf("failed to listen: %w", err)
 	}
 
-	s.server = grpc.NewServer()
+	// 加载TLS证书
+	creds, err := credentials.NewServerTLSFromFile(defaultCert, defaultCertKey)
+	if err != nil {
+		return fmt.Errorf("failed to load TLS credentials: %w", err)
+	}
+
+	s.server = grpc.NewServer(grpc.Creds(creds))
 	pb.RegisterAuthServiceServer(s.server, s)
 
-	fmt.Printf("[auth-server] gRPC listening on :%d\n", port)
+	fmt.Printf("[auth-server] gRPC listening on :%d (TLS)\n", port)
 	return s.server.Serve(lis)
 }
 

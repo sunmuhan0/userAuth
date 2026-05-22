@@ -4,20 +4,24 @@ import (
 	"fmt"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 
 	pb "ttuser/auth-client/auth"
 )
 
-// 默认gRPC地址，后续从配置中心获取
-const defaultAddr = "localhost:9090"
+const (
+	// 默认gRPC地址，后续从配置中心获取
+	defaultAddr = "localhost:9090"
+	// CA 证书路径，后续从配置中心获取
+	defaultCACert = "../certs/ca.pem"
+)
 
 // IAuthServiceClient 内嵌生成的 gRPC client 接口，方便直接调用 RPC 方法
 type IAuthServiceClient struct {
 	pb.AuthServiceClient
 }
 
-// AuthClient 封装gRPC连接
+// AuthClient 封装gRPC连接（TLS加密）
 // 内嵌 IAuthServiceClient，外部可直接调用 Login/Logout/RefreshToken 等方法
 // 实现 inji.Startable / inji.Closeable 接口，支持自动注册
 type AuthClient struct {
@@ -38,13 +42,21 @@ func (c *AuthClient) Close() {
 }
 
 func (c *AuthClient) init() error {
-	addr := defaultAddr // TODO: 后续从配置中心获取
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	addr := defaultAddr     // TODO: 后续从配置中心获取
+	caCert := defaultCACert // TODO: 后续从配置中心获取
+
+	// 加载 CA 证书用于验证服务端
+	creds, err := credentials.NewClientTLSFromFile(caCert, "localhost")
+	if err != nil {
+		return fmt.Errorf("failed to load CA certificate from %s: %w", caCert, err)
+	}
+
+	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		return fmt.Errorf("failed to connect to auth-server at %s: %w", addr, err)
 	}
 	c.conn = conn
 	c.IAuthServiceClient = IAuthServiceClient{pb.NewAuthServiceClient(conn)}
-	fmt.Printf("[AuthClient] connected to auth-server at %s\n", addr)
+	fmt.Printf("[AuthClient] connected to auth-server at %s (TLS)\n", addr)
 	return nil
 }

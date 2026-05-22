@@ -28,6 +28,9 @@ go.work.sum
 .DS_Store
 Thumbs.db
 
+# 证书私钥（不提交）
+certs/*-key.pem
+
 # 临时文件
 /tmp/
 *.log
