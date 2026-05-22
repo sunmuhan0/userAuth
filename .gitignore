@@ -1,0 +1,34 @@
+# 编译产物
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# 测试产物
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# Go
+vendor/
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 临时文件
+/tmp/
+*.log
+*.pid
