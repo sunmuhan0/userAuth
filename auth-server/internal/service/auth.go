@@ -6,98 +6,106 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"ttuser/auth-server/internal/dao"
 	"ttuser/auth-server/internal/model"
-	"ttuser/auth-server/internal/store"
 	"ttuser/auth-server/pkg/token"
 )
 
 var (
 	ErrInvalidCredentials = errors.New("invalid username or password")
 	ErrUserNotFound       = errors.New("user not found")
+	ErrUserAlreadyExists  = errors.New("username already exists")
 	ErrTokenBlacklisted   = errors.New("token has been revoked")
 )
 
 // AuthServiceImpl 认证服务实现
 type AuthServiceImpl struct {
-	UserStore  *store.MemoryUserStore  `inject:"userStore"`
-	TokenStore *store.MemoryTokenStore `inject:"tokenStore"`
-	TokenMgr   *token.JWTManager      `inject:"tokenManager"`
+	UserDAO  *dao.UserDAO      `inject:"userDAO"`
+	TokenDAO *dao.TokenDAO     `inject:"tokenDAO"`
+	TokenMgr *token.JWTManager `inject:"tokenManager"`
 }
 
+// Register 用户注册
+func (s *AuthServiceImpl) Register(ctx context.Context, username, password, nickname, email string) (*model.User, error) {
+	// bcrypt 加密密码
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+
+	record, err := s.UserDAO.Create(ctx, username, string(hashedPassword), nickname, email)
+	if err != nil {
+		if errors.Is(err, dao.ErrUserAlreadyExists) {
+			return nil, ErrUserAlreadyExists
+		}
+		return nil, err
+	}
+
+	return recordToUser(record), nil
+}
+
+// Login 用户登录
 func (s *AuthServiceImpl) Login(ctx context.Context, username, password string) (string, string, int64, *model.User, error) {
-	user, err := s.UserStore.GetByUsername(ctx, username)
+	record, err := s.UserDAO.GetByUsername(ctx, username)
 	if err != nil {
 		return "", "", 0, nil, ErrInvalidCredentials
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
+
+	if err := bcrypt.CompareHashAndPassword([]byte(record.Password), []byte(password)); err != nil {
 		return "", "", 0, nil, ErrInvalidCredentials
 	}
 
-	// 生成access token（2小时）
-	accessToken, expiresAt, err := s.TokenMgr.Generate(user.ID, user.Username)
+	accessToken, expiresAt, err := s.TokenMgr.Generate(record.ID, record.Username)
 	if err != nil {
 		return "", "", 0, nil, err
 	}
 
-	// 生成refresh token（7天）
-	refreshToken, _, err := s.TokenMgr.GenerateRefresh(user.ID, user.Username)
+	refreshToken, _, err := s.TokenMgr.GenerateRefresh(record.ID, record.Username)
 	if err != nil {
 		return "", "", 0, nil, err
 	}
 
-	return accessToken, refreshToken, expiresAt, user, nil
+	return accessToken, refreshToken, expiresAt, recordToUser(record), nil
 }
 
+// Logout 注销
 func (s *AuthServiceImpl) Logout(ctx context.Context, accessToken, refreshToken string) error {
-	// 将access token加入黑名单
 	if accessToken != "" {
 		claims, err := s.TokenMgr.Parse(accessToken)
 		if err == nil {
-			_ = s.TokenStore.Add(ctx, accessToken, claims.ExpiresAt.Unix())
+			_ = s.TokenDAO.Add(ctx, accessToken, claims.ExpiresAt.Unix())
 		}
 	}
-
-	// 将refresh token加入黑名单
 	if refreshToken != "" {
 		claims, err := s.TokenMgr.ParseRefresh(refreshToken)
 		if err == nil {
-			_ = s.TokenStore.Add(ctx, refreshToken, claims.ExpiresAt.Unix())
+			_ = s.TokenDAO.Add(ctx, refreshToken, claims.ExpiresAt.Unix())
 		}
 	}
-
 	return nil
 }
 
+// GetUserInfo 获取用户信息
 func (s *AuthServiceImpl) GetUserInfo(ctx context.Context, userID string) (*model.User, error) {
-	user, err := s.UserStore.GetByID(ctx, userID)
+	record, err := s.UserDAO.GetByID(ctx, userID)
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
-	return user, nil
+	return recordToUser(record), nil
 }
 
+// UpdateUserInfo 更新用户信息
 func (s *AuthServiceImpl) UpdateUserInfo(ctx context.Context, userID, nickname, email, avatar string) (*model.User, error) {
-	user, err := s.UserStore.GetByID(ctx, userID)
+	record, err := s.UserDAO.Update(ctx, userID, nickname, email, avatar)
 	if err != nil {
-		return nil, ErrUserNotFound
-	}
-	if nickname != "" {
-		user.Nickname = nickname
-	}
-	if email != "" {
-		user.Email = email
-	}
-	if avatar != "" {
-		user.Avatar = avatar
-	}
-	if err := s.UserStore.Update(ctx, user); err != nil {
 		return nil, err
 	}
-	return user, nil
+	return recordToUser(record), nil
 }
 
+// ValidateToken 验证token
 func (s *AuthServiceImpl) ValidateToken(ctx context.Context, tokenStr string) (*token.Claims, error) {
-	blacklisted, err := s.TokenStore.Exists(ctx, tokenStr)
+	blacklisted, err := s.TokenDAO.Exists(ctx, tokenStr)
 	if err != nil {
 		return nil, err
 	}
@@ -111,9 +119,9 @@ func (s *AuthServiceImpl) ValidateToken(ctx context.Context, tokenStr string) (*
 	return claims, nil
 }
 
+// RefreshToken 续签token
 func (s *AuthServiceImpl) RefreshToken(ctx context.Context, refreshTokenStr string) (string, string, int64, error) {
-	// 1. 检查refresh token是否在黑名单
-	blacklisted, err := s.TokenStore.Exists(ctx, refreshTokenStr)
+	blacklisted, err := s.TokenDAO.Exists(ctx, refreshTokenStr)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -121,26 +129,35 @@ func (s *AuthServiceImpl) RefreshToken(ctx context.Context, refreshTokenStr stri
 		return "", "", 0, ErrTokenBlacklisted
 	}
 
-	// 2. 解析refresh token
 	claims, err := s.TokenMgr.ParseRefresh(refreshTokenStr)
 	if err != nil {
 		return "", "", 0, err
 	}
 
-	// 3. 将旧refresh token加入黑名单（轮转模式）
-	_ = s.TokenStore.Add(ctx, refreshTokenStr, claims.ExpiresAt.Unix())
+	// 旧refresh token加入黑名单（轮转）
+	_ = s.TokenDAO.Add(ctx, refreshTokenStr, claims.ExpiresAt.Unix())
 
-	// 4. 签发新access token
 	newAccessToken, expiresAt, err := s.TokenMgr.Generate(claims.UserID, claims.Username)
 	if err != nil {
 		return "", "", 0, err
 	}
 
-	// 5. 签发新refresh token
 	newRefreshToken, _, err := s.TokenMgr.GenerateRefresh(claims.UserID, claims.Username)
 	if err != nil {
 		return "", "", 0, err
 	}
 
 	return newAccessToken, newRefreshToken, expiresAt, nil
+}
+
+func recordToUser(r *dao.UserRecord) *model.User {
+	return &model.User{
+		ID:        r.ID,
+		Username:  r.Username,
+		Nickname:  r.Nickname,
+		Email:     r.Email,
+		Avatar:    r.Avatar,
+		CreatedAt: r.CreatedAt,
+		UpdatedAt: r.UpdatedAt,
+	}
 }

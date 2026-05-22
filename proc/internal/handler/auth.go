@@ -28,11 +28,51 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" binding:"required"`
 }
 
+// RegisterRequest 注册请求
+type RegisterRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+	Nickname string `json:"nickname"`
+	Email    string `json:"email"`
+}
+
 // UpdateUserInfoRequest 更新用户信息请求
 type UpdateUserInfoRequest struct {
 	Nickname string `json:"nickname"`
 	Email    string `json:"email"`
 	Avatar   string `json:"avatar"`
+}
+
+// Register 注册接口
+func (h *AuthHandler) Register(c *gin.Context) {
+	var req RegisterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "invalid request: " + err.Error(),
+		})
+		return
+	}
+
+	resp, err := sp.Get().AuthManager.Register(c.Request.Context(), req.Username, req.Password, req.Nickname, req.Email)
+	if err != nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"code":    409,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "success",
+		"data": gin.H{
+			"id":       resp.User.Id,
+			"username": resp.User.Username,
+			"nickname": resp.User.Nickname,
+			"email":    resp.User.Email,
+		},
+	})
 }
 
 // Login 登录接口

@@ -12,6 +12,16 @@ type AuthManager struct {
 	AuthClient *authclient.AuthClient `inject:"authClient"`
 }
 
+// Register 调用auth-server注册接口
+func (m *AuthManager) Register(ctx context.Context, username, password, nickname, email string) (*pb.RegisterResponse, error) {
+	return m.AuthClient.Register(ctx, &pb.RegisterRequest{
+		Username: username,
+		Password: password,
+		Nickname: nickname,
+		Email:    email,
+	})
+}
+
 // Login 调用auth-server登录接口
 func (m *AuthManager) Login(ctx context.Context, username, password string) (*pb.LoginResponse, error) {
 	return m.AuthClient.Login(ctx, &pb.LoginRequest{

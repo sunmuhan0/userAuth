@@ -1,0 +1,14 @@
+-- 用户表
+CREATE TABLE IF NOT EXISTS `users` (
+  `id` VARCHAR(36) NOT NULL COMMENT '用户ID (UUID)',
+  `username` VARCHAR(64) NOT NULL COMMENT '用户名',
+  `password` VARCHAR(128) NOT NULL COMMENT '密码 (bcrypt hash)',
+  `nickname` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '昵称',
+  `email` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '邮箱',
+  `avatar` VARCHAR(256) NOT NULL DEFAULT '' COMMENT '头像URL',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_username` (`username`),
+  KEY `idx_email` (`email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';

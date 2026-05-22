@@ -23,6 +23,7 @@ func (r *Router) Setup() *gin.Engine {
 	// ========== 公开路由组（无需鉴权） ==========
 	publicGroup := r.Engine.Group("/api/v1")
 	{
+		publicGroup.POST("/register", authHandler.Register)
 		publicGroup.POST("/login", authHandler.Login)
 		publicGroup.POST("/refresh", authHandler.Refresh)
 	}

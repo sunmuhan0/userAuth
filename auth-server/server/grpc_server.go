@@ -9,12 +9,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	pb "ttuser/auth-client/auth"
 	"ttuser/auth-server/internal/model"
 	"ttuser/auth-server/internal/service"
-	pb "ttuser/auth-client/auth"
 )
 
-// 默认gRPC监听端口
 const defaultPort = 9090
 
 // AuthGRPCServer gRPC服务端实现
@@ -24,9 +23,9 @@ type AuthGRPCServer struct {
 	server      *grpc.Server
 }
 
-// Run 启动gRPC服务（不命名Start，避免inji自动调用）
+// Run 启动gRPC服务
 func (s *AuthGRPCServer) Run() error {
-	port := defaultPort // TODO: 后续从配置中心获取
+	port := defaultPort
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
@@ -44,6 +43,21 @@ func (s *AuthGRPCServer) Stop() {
 	if s.server != nil {
 		s.server.GracefulStop()
 	}
+}
+
+// Register 注册RPC
+func (s *AuthGRPCServer) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+	if req.Username == "" || req.Password == "" {
+		return nil, status.Error(codes.InvalidArgument, "username and password are required")
+	}
+	user, err := s.AuthService.Register(ctx, req.Username, req.Password, req.Nickname, req.Email)
+	if err != nil {
+		if err == service.ErrUserAlreadyExists {
+			return nil, status.Error(codes.AlreadyExists, err.Error())
+		}
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &pb.RegisterResponse{User: userToProto(user)}, nil
 }
 
 // Login 登录RPC

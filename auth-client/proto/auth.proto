@@ -6,6 +6,8 @@ option go_package = "ttuser/auth-client/auth";
 
 // 用户认证服务
 service AuthService {
+  // 注册
+  rpc Register(RegisterRequest) returns (RegisterResponse);
   // 登录
   rpc Login(LoginRequest) returns (LoginResponse);
   // 注销（登出）
@@ -18,6 +20,17 @@ service AuthService {
   rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
   // 续签Token
   rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+}
+
+message RegisterRequest {
+  string username = 1;
+  string password = 2;
+  string nickname = 3;
+  string email = 4;
+}
+
+message RegisterResponse {
+  UserInfo user = 1;
 }
 
 message LoginRequest {

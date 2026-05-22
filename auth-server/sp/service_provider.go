@@ -5,18 +5,20 @@ import (
 
 	"github.com/teou/inji"
 
+	"ttuser/auth-server/internal/dao"
 	"ttuser/auth-server/internal/service"
-	"ttuser/auth-server/internal/store"
 	"ttuser/auth-server/pkg/token"
 	"ttuser/auth-server/server"
+	"ttuser/data-store/engine"
 )
 
 // ServiceProvider 聚合所有服务依赖
-// 全部使用具体指针类型，inji 直接创建实例并调 Start() 初始化
 // 字段顺序即创建顺序，被依赖的放前面
+// ProcMysql 使用接口类型，需要通过 implmap 注册具体实现
 type ServiceProvider struct {
-	UserStore   *store.MemoryUserStore   `inject:"userStore"`
-	TokenStore  *store.MemoryTokenStore  `inject:"tokenStore"`
+	ProcMysql   engine.IMysqlClient      `inject:"procMysqlClient"`
+	UserDAO     *dao.UserDAO             `inject:"userDAO"`
+	TokenDAO    *dao.TokenDAO            `inject:"tokenDAO"`
 	TokenMgr    *token.JWTManager        `inject:"tokenManager"`
 	AuthService *service.AuthServiceImpl `inject:"authService"`
 	GRPCServer  *server.AuthGRPCServer   `inject:"grpcServer"`
@@ -27,7 +29,6 @@ var (
 	once     sync.Once
 )
 
-// Init 从inji容器中获取ServiceProvider单例
 func Init() {
 	obj, ok := inji.Find("serviceProvider")
 	if !ok {
@@ -38,7 +39,6 @@ func Init() {
 	})
 }
 
-// Get 获取ServiceProvider单例
 func Get() *ServiceProvider {
 	return instance
 }
