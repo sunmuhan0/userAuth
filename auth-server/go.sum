@@ -11,6 +11,8 @@ github.com/google/go-cmp v0.5.5/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/
 github.com/google/go-cmp v0.5.9 h1:O2Tfq5qg4qc4AmwVlvv0oLiVAGB7enBSJ2x2DqQFi38=
 github.com/google/uuid v1.3.0 h1:t6JiXgmwXMjEs8VusXIJk2BXHsn+wx8BZdTaoZ5fu7I=
 github.com/google/uuid v1.3.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/streadway/amqp v1.1.0 h1:py12iX8XSyI7aN/3dUT8DFIDJazNJsVJdxNVEpnQTZM=
+github.com/streadway/amqp v1.1.0/go.mod h1:WYSrTEYHOXHd0nwFeUXAe2G2hRnQT+deZJJf88uS9Bg=
 github.com/teou/implmap v0.0.0-20181215111212-373d77bc2b63/go.mod h1:Ekoq5rk8MC/wSS+tnlE/L2dejHhsi6f/jMK+CHDFAr0=
 github.com/teou/implmap v0.0.0-20220223051011-e99c668c6344 h1:9bzpXfsKtJGIunac5/zUn9DH4ZN92u7tn0p4WEXiEws=
 github.com/teou/implmap v0.0.0-20220223051011-e99c668c6344/go.mod h1:X4TKxbUhLhO5kNts/H0DT7na1MyQ0+1ughoz42ISOA0=

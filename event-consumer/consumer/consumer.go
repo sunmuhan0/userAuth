@@ -1,0 +1,167 @@
+package consumer
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/streadway/amqp"
+)
+
+// IEventHandler 事件处理接口
+// 每个下游服务（短信、邮件、推送等）实现该接口
+type IEventHandler interface {
+	// Handle 处理一条原始消息，body为JSON字节
+	Handle(body []byte) error
+}
+
+// HandlerFunc 函数适配器，方便用匿名函数实现IEventHandler
+type HandlerFunc func(body []byte) error
+
+func (f HandlerFunc) Handle(body []byte) error {
+	return f(body)
+}
+
+// IEventConsumer 事件消费者接口
+type IEventConsumer interface {
+	Start() error
+	Stop()
+}
+
+// RMQConsumer 基于RabbitMQ的通用事件消费者
+type RMQConsumer struct {
+	config  *RMQConfig
+	conn    *amqp.Connection
+	ch      *amqp.Channel
+	handler IEventHandler
+	done    chan struct{}
+}
+
+// NewRMQConsumer 创建通用RMQ消费者
+func NewRMQConsumer(config *RMQConfig, handler IEventHandler) *RMQConsumer {
+	return &RMQConsumer{
+		config:  config,
+		handler: handler,
+		done:    make(chan struct{}),
+	}
+}
+
+// Start 启动消费者
+func (c *RMQConsumer) Start() error {
+	var err error
+	c.conn, err = amqp.Dial(c.config.URL)
+	if err != nil {
+		return fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+	}
+
+	c.ch, err = c.conn.Channel()
+	if err != nil {
+		return fmt.Errorf("failed to open channel: %w", err)
+	}
+
+	// 声明交换机
+	err = c.ch.ExchangeDeclare(
+		c.config.Exchange,
+		c.config.ExchangeType,
+		true,  // durable
+		false, // auto-deleted
+		false, // internal
+		false, // no-wait
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to declare exchange: %w", err)
+	}
+
+	// 声明队列
+	_, err = c.ch.QueueDeclare(
+		c.config.Queue,
+		true,  // durable
+		false, // delete when unused
+		false, // exclusive
+		false, // no-wait
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to declare queue: %w", err)
+	}
+
+	// 绑定队列到交换机
+	err = c.ch.QueueBind(
+		c.config.Queue,
+		c.config.RoutingKey,
+		c.config.Exchange,
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to bind queue: %w", err)
+	}
+
+	// 设置QoS
+	if c.config.PrefetchCnt > 0 {
+		err = c.ch.Qos(c.config.PrefetchCnt, 0, false)
+		if err != nil {
+			return fmt.Errorf("failed to set QoS: %w", err)
+		}
+	}
+
+	// 开始消费
+	msgs, err := c.ch.Consume(
+		c.config.Queue,
+		"",    // consumer tag
+		false, // auto-ack (手动确认)
+		false, // exclusive
+		false, // no-local
+		false, // no-wait
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to register consumer: %w", err)
+	}
+
+	log.Printf("[event-consumer] started, queue=%s, routingKey=%s", c.config.Queue, c.config.RoutingKey)
+
+	go c.consume(msgs)
+
+	return nil
+}
+
+// consume 消费消息循环
+func (c *RMQConsumer) consume(msgs <-chan amqp.Delivery) {
+	for {
+		select {
+		case <-c.done:
+			return
+		case msg, ok := <-msgs:
+			if !ok {
+				log.Println("[event-consumer] channel closed, exiting consumer loop")
+				return
+			}
+			c.processMessage(msg)
+		}
+	}
+}
+
+// processMessage 处理单条消息
+func (c *RMQConsumer) processMessage(msg amqp.Delivery) {
+	if err := c.handler.Handle(msg.Body); err != nil {
+		log.Printf("[event-consumer] handler error: %v, body: %s", err, string(msg.Body))
+		// 处理失败，重新入队重试
+		msg.Nack(false, true)
+		return
+	}
+	// 处理成功，确认
+	msg.Ack(false)
+}
+
+// Stop 停止消费者
+func (c *RMQConsumer) Stop() {
+	close(c.done)
+	if c.ch != nil {
+		c.ch.Close()
+	}
+	if c.conn != nil {
+		c.conn.Close()
+	}
+	log.Println("[event-consumer] stopped")
+}

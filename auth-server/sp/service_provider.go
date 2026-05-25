@@ -10,6 +10,7 @@ import (
 	"ttuser/auth-server/pkg/token"
 	"ttuser/auth-server/server"
 	"ttuser/data-store/engine"
+	"ttuser/event-producer/producer"
 )
 
 // ServiceProvider 聚合所有服务依赖
@@ -20,6 +21,7 @@ type ServiceProvider struct {
 	UserDAO     *dao.UserDAO             `inject:"userDAO"`
 	TokenDAO    *dao.TokenDAO            `inject:"tokenDAO"`
 	TokenMgr    *token.JWTManager        `inject:"tokenManager"`
+	EventPublisher *producer.RMQPublisher   `inject:"eventPublisher"`
 	AuthService *service.AuthServiceImpl `inject:"authService"`
 	GRPCServer  *server.AuthGRPCServer   `inject:"grpcServer"`
 }

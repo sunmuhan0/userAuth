@@ -10,6 +10,7 @@ import (
 	"ttuser/auth-server/internal/dao"
 	"ttuser/auth-server/internal/model"
 	"ttuser/auth-server/pkg/token"
+	"ttuser/event-producer/producer"
 )
 
 var (
@@ -24,9 +25,10 @@ var (
 
 // AuthServiceImpl 认证服务实现
 type AuthServiceImpl struct {
-	UserDAO  *dao.UserDAO      `inject:"userDAO"`
-	TokenDAO *dao.TokenDAO     `inject:"tokenDAO"`
-	TokenMgr *token.JWTManager `inject:"tokenManager"`
+	UserDAO        *dao.UserDAO         `inject:"userDAO"`
+	TokenDAO       *dao.TokenDAO        `inject:"tokenDAO"`
+	TokenMgr       *token.JWTManager    `inject:"tokenManager"`
+	EventPublisher producer.IEventPublisher `inject:"eventPublisher"`
 }
 
 // Register 用户注册
@@ -54,6 +56,24 @@ func (s *AuthServiceImpl) Register(ctx context.Context, username, password, nick
 			return nil, ErrUserAlreadyExists
 		}
 		return nil, err
+	}
+
+	// 发布用户注册事件到RMQ，通知下游服务（短信、邮件等）
+	if s.EventPublisher != nil {
+		event := &producer.Event{
+			Type: producer.EventUserRegistered,
+			Payload: &producer.UserRegisteredPayload{
+				UserID:   record.ID,
+				Username: record.Username,
+				Phone:    "", // TODO: 后续扩展用户注册时传入手机号
+				Email:    record.Email,
+				Nickname: record.Nickname,
+			},
+		}
+		if err := s.EventPublisher.Publish(producer.EventUserRegistered, event); err != nil {
+			// 发送MQ失败不影响注册主流程，仅记录日志
+			fmt.Printf("[auth-service] failed to publish user registered event: %v\n", err)
+		}
 	}
 
 	return recordToUser(record), nil
