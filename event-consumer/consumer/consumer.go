@@ -24,31 +24,22 @@ func (f HandlerFunc) Handle(body []byte) error {
 // IEventConsumer 事件消费者接口
 type IEventConsumer interface {
 	Start() error
-	Stop()
+	Close()
 }
 
 // RMQConsumer 基于RabbitMQ的通用事件消费者
 type RMQConsumer struct {
-	config  *RMQConfig
-	conn    *amqp.Connection
-	ch      *amqp.Channel
-	handler IEventHandler
-	done    chan struct{}
-}
-
-// NewRMQConsumer 创建通用RMQ消费者
-func NewRMQConsumer(config *RMQConfig, handler IEventHandler) *RMQConsumer {
-	return &RMQConsumer{
-		config:  config,
-		handler: handler,
-		done:    make(chan struct{}),
-	}
+	conn *amqp.Connection
+	ch   *amqp.Channel
+	done chan struct{}
 }
 
 // Start 启动消费者
-func (c *RMQConsumer) Start() error {
+func (c *RMQConsumer) Start(config *RMQConfig, handler IEventHandler) error {
+	c.done = make(chan struct{})
+
 	var err error
-	c.conn, err = amqp.Dial(c.config.URL)
+	c.conn, err = amqp.Dial(config.URL)
 	if err != nil {
 		return fmt.Errorf("failed to connect to RabbitMQ: %w", err)
 	}
@@ -60,8 +51,8 @@ func (c *RMQConsumer) Start() error {
 
 	// 声明交换机
 	err = c.ch.ExchangeDeclare(
-		c.config.Exchange,
-		c.config.ExchangeType,
+		config.Exchange,
+		config.ExchangeType,
 		true,  // durable
 		false, // auto-deleted
 		false, // internal
@@ -74,7 +65,7 @@ func (c *RMQConsumer) Start() error {
 
 	// 声明队列
 	_, err = c.ch.QueueDeclare(
-		c.config.Queue,
+		config.Queue,
 		true,  // durable
 		false, // delete when unused
 		false, // exclusive
@@ -87,9 +78,9 @@ func (c *RMQConsumer) Start() error {
 
 	// 绑定队列到交换机
 	err = c.ch.QueueBind(
-		c.config.Queue,
-		c.config.RoutingKey,
-		c.config.Exchange,
+		config.Queue,
+		config.RoutingKey,
+		config.Exchange,
 		false,
 		nil,
 	)
@@ -98,8 +89,8 @@ func (c *RMQConsumer) Start() error {
 	}
 
 	// 设置QoS
-	if c.config.PrefetchCnt > 0 {
-		err = c.ch.Qos(c.config.PrefetchCnt, 0, false)
+	if config.PrefetchCnt > 0 {
+		err = c.ch.Qos(config.PrefetchCnt, 0, false)
 		if err != nil {
 			return fmt.Errorf("failed to set QoS: %w", err)
 		}
@@ -107,7 +98,7 @@ func (c *RMQConsumer) Start() error {
 
 	// 开始消费
 	msgs, err := c.ch.Consume(
-		c.config.Queue,
+		config.Queue,
 		"",    // consumer tag
 		false, // auto-ack (手动确认)
 		false, // exclusive
@@ -119,15 +110,15 @@ func (c *RMQConsumer) Start() error {
 		return fmt.Errorf("failed to register consumer: %w", err)
 	}
 
-	log.Printf("[event-consumer] started, queue=%s, routingKey=%s", c.config.Queue, c.config.RoutingKey)
+	log.Printf("[event-consumer] started, queue=%s, routingKey=%s", config.Queue, config.RoutingKey)
 
-	go c.consume(msgs)
+	go c.consume(msgs, handler)
 
 	return nil
 }
 
 // consume 消费消息循环
-func (c *RMQConsumer) consume(msgs <-chan amqp.Delivery) {
+func (c *RMQConsumer) consume(msgs <-chan amqp.Delivery, handler IEventHandler) {
 	for {
 		select {
 		case <-c.done:
@@ -137,14 +128,14 @@ func (c *RMQConsumer) consume(msgs <-chan amqp.Delivery) {
 				log.Println("[event-consumer] channel closed, exiting consumer loop")
 				return
 			}
-			c.processMessage(msg)
+			c.processMessage(msg, handler)
 		}
 	}
 }
 
 // processMessage 处理单条消息
-func (c *RMQConsumer) processMessage(msg amqp.Delivery) {
-	if err := c.handler.Handle(msg.Body); err != nil {
+func (c *RMQConsumer) processMessage(msg amqp.Delivery, handler IEventHandler) {
+	if err := handler.Handle(msg.Body); err != nil {
 		log.Printf("[event-consumer] handler error: %v, body: %s", err, string(msg.Body))
 		// 处理失败，重新入队重试
 		msg.Nack(false, true)
@@ -154,9 +145,11 @@ func (c *RMQConsumer) processMessage(msg amqp.Delivery) {
 	msg.Ack(false)
 }
 
-// Stop 停止消费者
-func (c *RMQConsumer) Stop() {
-	close(c.done)
+// Close 关闭连接
+func (c *RMQConsumer) Close() {
+	if c.done != nil {
+		close(c.done)
+	}
 	if c.ch != nil {
 		c.ch.Close()
 	}

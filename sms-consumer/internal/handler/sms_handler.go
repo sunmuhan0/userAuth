@@ -25,23 +25,16 @@ type UserRegisteredPayload struct {
 
 // SMSHandler 短信事件处理器，实现 event-consumer 的 IEventHandler 接口
 type SMSHandler struct {
-	Sender *sms.Sender
-}
-
-// NewSMSHandler 创建短信处理器
-func NewSMSHandler(sender *sms.Sender) *SMSHandler {
-	return &SMSHandler{Sender: sender}
+	Sender *sms.Sender `inject:"smsSender"`
 }
 
 // Handle 处理原始消息体
 func (h *SMSHandler) Handle(body []byte) error {
-	// 解析通用事件包装
 	var event Event
 	if err := json.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("unmarshal event failed: %w", err)
 	}
 
-	// 根据事件类型分发
 	switch event.Type {
 	case "user.registered":
 		return h.handleUserRegistered(event.Payload)
