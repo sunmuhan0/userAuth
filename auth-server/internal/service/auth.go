@@ -67,7 +67,7 @@ func (s *AuthServiceImpl) Register(ctx context.Context, username, password, nick
 			Email:    record.Email,
 			Nickname: record.Nickname,
 		}
-		if err := s.EventPublisher.Publish(TopicUser, TagUserRegistered, payload); err != nil {
+		if err := s.EventPublisher.Publish(TopicUser, TagUserRegistered, record.ID, payload); err != nil {
 			// 发送MQ失败不影响注册主流程，仅记录日志
 			fmt.Printf("[auth-service] failed to publish user registered event: %v\n", err)
 		}

@@ -20,9 +20,9 @@ func init() {
 
 // IRmqPublisher 事件发布接口
 // 任何服务需要发MQ消息，注入该接口即可
-// topic: 消息主题，tag: 消息标签，payload: 任意struct（JSON序列化）
+// topic: 消息主题，tag: 消息标签，key: 业务唯一标识（用于查询/去重），payload: 任意struct（JSON序列化）
 type IRmqPublisher interface {
-	Publish(topic string, tag string, payload interface{}) error
+	Publish(topic string, tag string, key string, payload interface{}) error
 }
 
 // EventRMQPublisher 基于RocketMQ的事件发布实现
@@ -56,8 +56,9 @@ func (p *EventRMQPublisher) Start() error {
 // Publish 发布消息到RocketMQ
 // topic: 消息主题
 // tag: 消息标签（用于消费端过滤）
+// key: 业务唯一标识（用于消息查询、去重、日志追踪）
 // payload: 任意struct，JSON序列化后作为消息体
-func (p *EventRMQPublisher) Publish(topic string, tag string, payload interface{}) error {
+func (p *EventRMQPublisher) Publish(topic string, tag string, key string, payload interface{}) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal payload: %w", err)
@@ -68,13 +69,14 @@ func (p *EventRMQPublisher) Publish(topic string, tag string, payload interface{
 		Body:  body,
 	}
 	msg.WithTag(tag)
+	msg.WithKeys([]string{key})
 
 	result, err := p.producer.SendSync(context.Background(), msg)
 	if err != nil {
-		return fmt.Errorf("failed to publish [topic=%s, tag=%s]: %w", topic, tag, err)
+		return fmt.Errorf("failed to publish [topic=%s, tag=%s, key=%s]: %w", topic, tag, key, err)
 	}
 
-	fmt.Printf("[event-producer] published: topic=%s, tag=%s, msgId=%s\n", topic, tag, result.MsgID)
+	fmt.Printf("[event-producer] published: topic=%s, tag=%s, key=%s, msgId=%s\n", topic, tag, key, result.MsgID)
 	return nil
 }
 
