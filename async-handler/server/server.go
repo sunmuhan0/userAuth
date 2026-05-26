@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/consumer"
 	"github.com/apache/rocketmq-client-go/v2/primitive"
 
 	"ttuser/async-handler/biz/register"
 	"ttuser/async-handler/pkg/router"
+	"ttuser/pkg/trace"
 )
 
 // RMQConfig RocketMQ消费者配置
@@ -48,7 +50,7 @@ func (s *ConsumerServer) Start() error {
 		}
 	}
 
-	fmt.Printf("[sms-consumer] started, topicGroups=%d\n", len(engine.Groups))
+	fmt.Printf("[async-handler] started, topicGroups=%d\n", len(engine.Groups))
 	return nil
 }
 
@@ -64,30 +66,37 @@ func (s *ConsumerServer) startGroup(group *router.TopicGroup) error {
 		return fmt.Errorf("failed to create consumer [group=%s]: %w", group.ConsumerGroup, err)
 	}
 
-	// 订阅topic，tag expression由router group自动生成
+	// 订阅topic
 	tagExpr := group.TagExpression()
 	selector := consumer.MessageSelector{
 		Type:       consumer.TAG,
 		Expression: tagExpr,
 	}
 
-	// 闭包捕获当前group
 	currentGroup := group
-	err = c.Subscribe(group.Topic, selector, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
+	err = c.Subscribe(group.Topic, selector, func(_ context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
 		for _, msg := range msgs {
 			tag := msg.GetTags()
 			handler, ok := currentGroup.GetHandler(tag)
 			if !ok {
-				log.Printf("[sms-consumer] no handler for tag=%s, topic=%s, skip", tag, msg.Topic)
+				log.Printf("[async-handler] no handler for tag=%s, topic=%s, skip", tag, msg.Topic)
 				continue
 			}
-			if err := handler.Handle(msg.Body); err != nil {
-				log.Printf("[sms-consumer] handle error: topic=%s, tag=%s, keys=%s, msgId=%s, err=%v",
-					msg.Topic, tag, msg.GetKeys(), msg.MsgId, err)
+
+			// 从message key提取trace_id，构建带trace_id的context
+			traceID := msg.GetKeys()
+			if traceID == "" {
+				traceID = trace.NewTraceID()
+			}
+			ctx := trace.WithTraceID(context.Background(), traceID)
+
+			if err := handler.Handle(ctx, msg.Body); err != nil {
+				log.Printf("[async-handler] handle error: topic=%s, tag=%s, trace_id=%s, msgId=%s, err=%v",
+					msg.Topic, tag, traceID, msg.MsgId, err)
 				return consumer.ConsumeRetryLater, nil
 			}
-			log.Printf("[sms-consumer] consumed: topic=%s, tag=%s, keys=%s, msgId=%s",
-				msg.Topic, tag, msg.GetKeys(), msg.MsgId)
+			log.Printf("[async-handler] consumed: topic=%s, tag=%s, trace_id=%s, msgId=%s",
+				msg.Topic, tag, traceID, msg.MsgId)
 		}
 		return consumer.ConsumeSuccess, nil
 	})
@@ -100,7 +109,7 @@ func (s *ConsumerServer) startGroup(group *router.TopicGroup) error {
 	}
 
 	s.consumers = append(s.consumers, c)
-	log.Printf("[sms-consumer] subscribed: group=%s, topic=%s, tags=%s", group.ConsumerGroup, group.Topic, tagExpr)
+	log.Printf("[async-handler] subscribed: group=%s, topic=%s, tags=%s", group.ConsumerGroup, group.Topic, tagExpr)
 	return nil
 }
 
@@ -109,5 +118,5 @@ func (s *ConsumerServer) Close() {
 	for _, c := range s.consumers {
 		c.Shutdown()
 	}
-	fmt.Println("[sms-consumer] shutdown")
+	fmt.Println("[async-handler] shutdown")
 }

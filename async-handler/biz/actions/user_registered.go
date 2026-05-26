@@ -1,9 +1,12 @@
 package actions
 
 import (
-	"log"
+	"context"
+
+	"go.uber.org/zap"
 
 	"ttuser/async-handler/internal/sms"
+	"ttuser/pkg/log"
 )
 
 // UserRegisteredReq 用户注册事件请求体
@@ -16,8 +19,10 @@ type UserRegisteredReq struct {
 }
 
 // UserRegistered 处理用户注册事件，发送短信
-// 符合 func(req *T) error 签名，由 router.WrapHandleFunc 自动反序列化
-func UserRegistered(req *UserRegisteredReq) error {
-	log.Printf("[action] user registered: userID=%s, username=%s", req.UserID, req.Username)
+func UserRegistered(ctx context.Context, req *UserRegisteredReq) error {
+	log.Info(ctx, "user registered event received",
+		zap.String("user_id", req.UserID),
+		zap.String("username", req.Username),
+	)
 	return sms.GetSender().SendRegistrationSMS(req.Phone, req.Username)
 }

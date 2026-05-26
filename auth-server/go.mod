@@ -11,6 +11,7 @@ require (
 	ttuser/auth-client v0.0.0
 	ttuser/data-store v0.0.0
 	ttuser/event-producer v0.0.0
+	ttuser/pkg v0.0.0
 )
 
 require (
@@ -32,13 +33,11 @@ require (
 	github.com/tidwall/gjson v1.13.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
-	go.uber.org/atomic v1.5.1 // indirect
-	golang.org/x/lint v0.0.0-20190930215403-16217165b5de // indirect
+	go.uber.org/atomic v1.10.0 // indirect
 	golang.org/x/net v0.10.0 // indirect
 	golang.org/x/sys v0.13.0 // indirect
 	golang.org/x/term v0.13.0 // indirect
 	golang.org/x/text v0.13.0 // indirect
-	golang.org/x/tools v0.6.0 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
@@ -49,4 +48,5 @@ replace (
 	ttuser/auth-client => ../auth-client
 	ttuser/data-store => ../data-store
 	ttuser/event-producer => ../event-producer
+	ttuser/pkg => ../pkg
 )

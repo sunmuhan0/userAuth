@@ -13,6 +13,7 @@ import (
 	pb "ttuser/auth-client/auth"
 	"ttuser/auth-server/internal/model"
 	"ttuser/auth-server/internal/service"
+	"ttuser/auth-server/pkg/interceptor"
 )
 
 const (
@@ -42,7 +43,10 @@ func (s *AuthGRPCServer) Run() error {
 		return fmt.Errorf("failed to load TLS credentials: %w", err)
 	}
 
-	s.server = grpc.NewServer(grpc.Creds(creds))
+	s.server = grpc.NewServer(
+		grpc.Creds(creds),
+		grpc.UnaryInterceptor(interceptor.UnaryServerTraceInterceptor()),
+	)
 	pb.RegisterAuthServiceServer(s.server, s)
 
 	fmt.Printf("[auth-server] gRPC listening on :%d (TLS)\n", port)

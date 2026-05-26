@@ -1,12 +1,15 @@
 package client
 
 import (
+	"context"
 	"fmt"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 
 	pb "ttuser/auth-client/auth"
+	"ttuser/pkg/trace"
 )
 
 const (
@@ -51,7 +54,10 @@ func (c *AuthClient) init() error {
 		return fmt.Errorf("failed to load CA certificate from %s: %w", caCert, err)
 	}
 
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.Dial(addr,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithUnaryInterceptor(unaryClientTraceInterceptor),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to connect to auth-server at %s: %w", addr, err)
 	}
@@ -59,4 +65,15 @@ func (c *AuthClient) init() error {
 	c.IAuthServiceClient = IAuthServiceClient{pb.NewAuthServiceClient(conn)}
 	fmt.Printf("[AuthClient] connected to auth-server at %s (TLS)\n", addr)
 	return nil
+}
+
+// unaryClientTraceInterceptor gRPC客户端拦截器
+// 从ctx提取trace_id，写入outgoing metadata传递给服务端
+func unaryClientTraceInterceptor(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	traceID := trace.GetTraceID(ctx)
+	if traceID != "" {
+		md := metadata.Pairs(trace.MetadataKey, traceID)
+		ctx = metadata.NewOutgoingContext(ctx, md)
+	}
+	return invoker(ctx, method, req, reply, cc, opts...)
 }

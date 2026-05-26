@@ -4,17 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/teou/implmap"
 	"reflect"
 
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/primitive"
 	rmqproducer "github.com/apache/rocketmq-client-go/v2/producer"
+	"github.com/teou/implmap"
+
+	"ttuser/pkg/trace"
 )
 
 func init() {
 	// 注册 IRmqPublisher 接口的实现
-	// inji通过implmap将 inject:"eventPublisher" 映射到 *EventRMQPublisher
 	implmap.Add("eventPublisher", reflect.TypeOf((*EventRMQPublisher)(nil)))
 }
 
@@ -47,29 +48,33 @@ func (p *EventRMQPublisher) Start() error {
 }
 
 // Publish 发布消息到RocketMQ
+// 自动从ctx提取trace_id作为message key（用于RocketMQ控制台按trace_id检索消息）
 // topic: 消息主题
 // tag: 消息标签（用于消费端过滤）
-// key: 业务唯一标识（用于消息查询、去重、日志追踪）
 // payload: 任意struct，JSON序列化后作为消息体
-func (p *EventRMQPublisher) Publish(topic string, tag string, key string, payload interface{}) error {
+func (p *EventRMQPublisher) Publish(ctx context.Context, topic string, tag string, payload interface{}) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
+
+	traceID := trace.GetTraceID(ctx)
 
 	msg := &primitive.Message{
 		Topic: topic,
 		Body:  body,
 	}
 	msg.WithTag(tag)
-	msg.WithKeys([]string{key})
-
-	result, err := p.producer.SendSync(context.Background(), msg)
-	if err != nil {
-		return fmt.Errorf("failed to publish [topic=%s, tag=%s, key=%s]: %w", topic, tag, key, err)
+	if traceID != "" {
+		msg.WithKeys([]string{traceID})
 	}
 
-	fmt.Printf("[event-producer] published: topic=%s, tag=%s, key=%s, msgId=%s\n", topic, tag, key, result.MsgID)
+	result, err := p.producer.SendSync(ctx, msg)
+	if err != nil {
+		return fmt.Errorf("failed to publish [topic=%s, tag=%s, trace_id=%s]: %w", topic, tag, traceID, err)
+	}
+
+	fmt.Printf("[event-producer] published: topic=%s, tag=%s, trace_id=%s, msgId=%s\n", topic, tag, traceID, result.MsgID)
 	return nil
 }
 

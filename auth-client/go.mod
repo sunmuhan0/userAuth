@@ -5,7 +5,10 @@ go 1.18
 require (
 	google.golang.org/grpc v1.56.3
 	google.golang.org/protobuf v1.31.0
+	ttuser/pkg v0.0.0
 )
+
+replace ttuser/pkg => ../pkg
 
 require (
 	github.com/golang/protobuf v1.5.3 // indirect

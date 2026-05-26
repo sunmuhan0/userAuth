@@ -6,6 +6,7 @@ require (
 	github.com/gin-gonic/gin v1.9.1
 	github.com/teou/inji v1.1.2
 	ttuser/auth-client v0.0.0
+	ttuser/pkg v0.0.0
 )
 
 require (
@@ -41,4 +42,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace ttuser/auth-client => ../auth-client
+replace (
+	ttuser/auth-client => ../auth-client
+	ttuser/pkg => ../pkg
+)

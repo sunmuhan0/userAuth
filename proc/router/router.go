@@ -17,6 +17,9 @@ type Router struct {
 func (r *Router) Setup() *gin.Engine {
 	r.Engine = gin.Default()
 
+	// 全局trace_id中间件（所有请求最先经过）
+	r.Engine.Use(filter.TraceFilter())
+
 	authHandler := &handler.AuthHandler{}
 	authFilter := &filter.AuthFilter{}
 	publicFilter := &filter.PublicFilter{}

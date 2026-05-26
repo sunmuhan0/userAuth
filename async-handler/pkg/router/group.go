@@ -1,8 +1,10 @@
 package router
 
+import "context"
+
 // Handler 消息处理接口
 type Handler interface {
-	Handle(body []byte) error
+	Handle(ctx context.Context, body []byte) error
 }
 
 // TopicGroup 一个topic的订阅组，管理tag → handler映射
@@ -23,7 +25,7 @@ func (g *TopicGroup) GetHandler(tag string) (Handler, bool) {
 	return h, ok
 }
 
-// GetTags 获取所有注册的tag（用于subscribe的tag expression）
+// GetTags 获取所有注册的tag
 func (g *TopicGroup) GetTags() []string {
 	tags := make([]string, 0, len(g.handlers))
 	for tag := range g.handlers {
