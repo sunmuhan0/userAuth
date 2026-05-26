@@ -15,7 +15,7 @@ import (
 const maxBodySize = 4 * 1024 // 4KB
 
 // AccessLogFilter 请求/响应日志中间件
-// 记录：trace_id, method, path, cost, uid, client_ip, header, req, ret, http_status
+// 日志格式参照hlthproc：msg=path, 业务数据打包为JSON data字段
 func AccessLogFilter() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -24,7 +24,7 @@ func AccessLogFilter() gin.HandlerFunc {
 		var reqBody string
 		if c.Request.Body != nil {
 			bodyBytes, _ := io.ReadAll(c.Request.Body)
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // 写回去让后续handler读
+			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 			reqBody = truncate(string(bodyBytes))
 		}
 
@@ -54,47 +54,45 @@ func AccessLogFilter() gin.HandlerFunc {
 		// 脱敏请求body
 		reqBody = sanitizeBody(reqBody)
 
+		// 解析ret为JSON对象（如果可以的话）
+		var retObj interface{}
+		if err := json.Unmarshal([]byte(retBody), &retObj); err != nil {
+			retObj = retBody
+		}
+
+		// 解析req为JSON对象
+		var reqObj interface{}
+		if err := json.Unmarshal([]byte(reqBody), &reqObj); err != nil {
+			reqObj = reqBody
+		}
+
+		// 组装data字段（所有业务数据打包为一个JSON对象）
+		data := map[string]interface{}{
+			"UA":         c.GetHeader("User-Agent"),
+			"cost":       cost,
+			"uid":        uidStr,
+			"client_ip":  c.ClientIP(),
+			"header":     header,
+			"req":        reqObj,
+			"ret":        retObj,
+			"httpStatus": httpStatus,
+		}
+
+		// path放入data
+		data["path"] = c.Request.URL.Path
+		data["method"] = c.Request.Method
+
 		// 获取context（带trace_id）
 		ctx := c.Request.Context()
 
 		// 根据状态码选择日志级别
 		switch {
 		case httpStatus >= 500:
-			log.Error(ctx, "access",
-				"method", c.Request.Method,
-				"path", c.Request.URL.Path,
-				"cost", cost,
-				"uid", uidStr,
-				"client_ip", c.ClientIP(),
-				"header", header,
-				"req", reqBody,
-				"ret", retBody,
-				"http_status", httpStatus,
-			)
+			log.Error(ctx, "access_log", "data", data)
 		case httpStatus >= 400:
-			log.Warn(ctx, "access",
-				"method", c.Request.Method,
-				"path", c.Request.URL.Path,
-				"cost", cost,
-				"uid", uidStr,
-				"client_ip", c.ClientIP(),
-				"header", header,
-				"req", reqBody,
-				"ret", retBody,
-				"http_status", httpStatus,
-			)
+			log.Warn(ctx, "access_log", "data", data)
 		default:
-			log.Info(ctx, "access",
-				"method", c.Request.Method,
-				"path", c.Request.URL.Path,
-				"cost", cost,
-				"uid", uidStr,
-				"client_ip", c.ClientIP(),
-				"header", header,
-				"req", reqBody,
-				"ret", retBody,
-				"http_status", httpStatus,
-			)
+			log.Info(ctx, "access_log", "data", data)
 		}
 	}
 }
@@ -106,12 +104,12 @@ type responseWriter struct {
 }
 
 func (w *responseWriter) Write(b []byte) (int, error) {
-	w.body.Write(b) // 同时写入缓冲
+	w.body.Write(b)
 	return w.ResponseWriter.Write(b)
 }
 
-// buildSanitizedHeader 构建关键header JSON（脱敏Authorization）
-func buildSanitizedHeader(c *gin.Context) string {
+// buildSanitizedHeader 构建关键header（脱敏Authorization）
+func buildSanitizedHeader(c *gin.Context) map[string]string {
 	headers := make(map[string]string)
 
 	if v := c.GetHeader("Content-Type"); v != "" {
@@ -124,8 +122,7 @@ func buildSanitizedHeader(c *gin.Context) string {
 		headers["Authorization"] = "Bearer ***"
 	}
 
-	b, _ := json.Marshal(headers)
-	return string(b)
+	return headers
 }
 
 // sanitizeBody 脱敏请求body中的password字段
@@ -136,7 +133,6 @@ func sanitizeBody(body string) string {
 
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(body), &data); err != nil {
-		// 不是JSON格式，原样返回
 		return body
 	}
 
