@@ -6,17 +6,14 @@ import (
 	"github.com/teou/inji"
 
 	"ttuser/sms-consumer/internal/handler"
-	"ttuser/sms-consumer/internal/sms"
 	"ttuser/sms-consumer/server"
 )
 
 // ServiceProvider 聚合所有服务依赖
-// 字段顺序即创建顺序，被依赖的放前面
+// 只声明需要在Start()中使用或外部访问的顶层组件
+// 中间依赖（smsConfig、smsSender、rmqConfig）由inji自动递归创建
 type ServiceProvider struct {
-	SMSConfig  *sms.Config              `inject:"smsConfig"`
-	SMSSender  *sms.Sender              `inject:"smsSender"`
 	SMSHandler *handler.SMSHandler      `inject:"smsHandler"`
-	RMQConfig  *server.RMQConfig        `inject:"rmqConfig"`
 	Server     *server.SMSConsumerServer `inject:"smsConsumerServer"`
 }
 
