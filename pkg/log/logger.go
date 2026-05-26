@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -14,14 +16,87 @@ import (
 var logger *zap.Logger
 var sugar *zap.SugaredLogger
 
+// LogConfig 日志配置
+type LogConfig struct {
+	ServiceName string // 服务名，如 "auth-server"
+	Port        int    // 服务端口，如 9090
+	LogDir      string // 日志根目录，默认 /var/log/work
+}
+
+// DefaultLogConfig 默认日志配置
+func DefaultLogConfig() *LogConfig {
+	return &LogConfig{
+		LogDir: "/var/log/work",
+	}
+}
+
 func init() {
-	// 默认初始化（仅stdout），如需Loki推送调用 InitWithLoki()
-	initLogger(nil)
+	// 默认初始化（仅stdout），应用启动时应调用 Init() 重新初始化
+	initLogger(nil, nil)
+}
+
+// Init 初始化日志（输出到stdout + 文件）
+// 日志文件路径：{logDir}/{serviceName}_{port}/20260526.log
+func Init(config *LogConfig) {
+	if config == nil {
+		config = DefaultLogConfig()
+	}
+
+	var fileWriter zapcore.WriteSyncer
+	if config.ServiceName != "" && config.Port > 0 {
+		dir := filepath.Join(config.LogDir, fmt.Sprintf("%s_%d", config.ServiceName, config.Port))
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			fmt.Printf("[log] failed to create log dir %s: %v\n", dir, err)
+		} else {
+			logFile := filepath.Join(dir, time.Now().Format("20060102")+".log")
+			f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			if err != nil {
+				fmt.Printf("[log] failed to open log file %s: %v\n", logFile, err)
+			} else {
+				fileWriter = zapcore.AddSync(f)
+				fmt.Printf("[log] writing to file: %s\n", logFile)
+			}
+		}
+	}
+
+	initLogger(fileWriter, nil)
+}
+
+// InitWithLoki 初始化日志并启用Loki推送（输出到stdout + 文件 + Loki）
+// 在应用启动时调用
+func InitWithLoki(config *LogConfig, lokiConfig *LokiConfig) {
+	if config == nil {
+		config = DefaultLogConfig()
+	}
+
+	var fileWriter zapcore.WriteSyncer
+	if config.ServiceName != "" && config.Port > 0 {
+		dir := filepath.Join(config.LogDir, fmt.Sprintf("%s_%d", config.ServiceName, config.Port))
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			fmt.Printf("[log] failed to create log dir %s: %v\n", dir, err)
+		} else {
+			logFile := filepath.Join(dir, time.Now().Format("20060102")+".log")
+			f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			if err != nil {
+				fmt.Printf("[log] failed to open log file %s: %v\n", logFile, err)
+			} else {
+				fileWriter = zapcore.AddSync(f)
+				fmt.Printf("[log] writing to file: %s\n", logFile)
+			}
+		}
+	}
+
+	InitLoki(lokiConfig)
+	var lokiWriter zapcore.WriteSyncer
+	if lokiConfig != nil && lokiConfig.Enable {
+		lokiWriter = &lokiWriteSyncer{}
+	}
+
+	initLogger(fileWriter, lokiWriter)
 }
 
 // initLogger 初始化zap logger
-// 如果lokiWriter不为nil，日志同时输出到stdout和Loki
-func initLogger(lokiWriter zapcore.WriteSyncer) {
+func initLogger(fileWriter, lokiWriter zapcore.WriteSyncer) {
 	config := zapcore.EncoderConfig{
 		TimeKey:      "ts",
 		LevelKey:     "level",
@@ -34,33 +109,23 @@ func initLogger(lokiWriter zapcore.WriteSyncer) {
 
 	encoder := zapcore.NewJSONEncoder(config)
 
-	var core zapcore.Core
-	if lokiWriter != nil {
-		// 同时输出到stdout和Loki
-		core = zapcore.NewCore(
-			encoder,
-			zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout), lokiWriter),
-			zapcore.InfoLevel,
-		)
-	} else {
-		core = zapcore.NewCore(
-			encoder,
-			zapcore.AddSync(os.Stdout),
-			zapcore.InfoLevel,
-		)
+	// 构建写入目标列表
+	writers := []zapcore.WriteSyncer{zapcore.AddSync(os.Stdout)}
+	if fileWriter != nil {
+		writers = append(writers, fileWriter)
 	}
+	if lokiWriter != nil {
+		writers = append(writers, lokiWriter)
+	}
+
+	core := zapcore.NewCore(
+		encoder,
+		zapcore.NewMultiWriteSyncer(writers...),
+		zapcore.InfoLevel,
+	)
 
 	logger = zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
 	sugar = logger.Sugar()
-}
-
-// InitWithLoki 初始化日志并启用Loki推送
-// 在应用启动时调用：log.InitWithLoki(log.DefaultLokiConfig())
-func InitWithLoki(config *LokiConfig) {
-	InitLoki(config)
-	if config != nil && config.Enable {
-		initLogger(&lokiWriteSyncer{})
-	}
 }
 
 // lokiWriteSyncer 实现 zapcore.WriteSyncer，将日志推送到Loki
@@ -101,8 +166,6 @@ func Debugf(ctx context.Context, format string, args ...interface{}) {
 }
 
 // ==================== kv 风格（结构化场景） ====================
-// 用法：log.Info(ctx, "user registered", "user_id", "xxx", "username", "test")
-// keysAndValues 必须是偶数个参数，key-value交替
 
 // Info 结构化Info日志，自动带trace_id
 func Info(ctx context.Context, msg string, keysAndValues ...interface{}) {
@@ -130,7 +193,6 @@ func Debug(ctx context.Context, msg string, keysAndValues ...interface{}) {
 
 // ==================== 工具函数 ====================
 
-// traceFields 返回trace_id的kv对（用于printf风格）
 func traceFields(ctx context.Context) []interface{} {
 	if ctx == nil {
 		return nil
@@ -142,7 +204,6 @@ func traceFields(ctx context.Context) []interface{} {
 	return nil
 }
 
-// appendTraceKV 将trace_id追加到kv列表
 func appendTraceKV(ctx context.Context, keysAndValues []interface{}) []interface{} {
 	if ctx == nil {
 		return keysAndValues

@@ -9,33 +9,18 @@ clients:
   - url: http://loki:3100/loki/api/v1/push
 
 scrape_configs:
-  # 采集docker容器stdout日志（适用于docker-compose部署的服务）
-  - job_name: docker
+  # 采集 /var/log/work/ 下所有服务日志
+  # 日志路径格式：/var/log/work/{服务名}_{端口}/{日期}.log
+  - job_name: ttuser
     static_configs:
       - targets:
           - localhost
         labels:
           job: ttuser
-          __path__: /var/log/ttuser/*.log
-
-  # 如果服务以docker容器方式运行，可以用docker driver直接采集
-  # - job_name: containers
-  #   docker_sd_configs:
-  #     - host: unix:///var/run/docker.sock
-  #   relabel_configs:
-  #     - source_labels: ['__meta_docker_container_name']
-  #       target_label: 'container'
-
-  # 采集本地日志文件（适用于非容器化部署）
-  - job_name: local
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: ttuser-local
           env: dev
-          __path__: /var/log/ttuser/**/*.log
+          __path__: /var/log/work/**/*.log
     pipeline_stages:
+      # 解析JSON日志，提取字段作为标签
       - json:
           expressions:
             level: level
@@ -43,4 +28,9 @@ scrape_configs:
             msg: msg
       - labels:
           level:
-          trace_id:
+      # 从文件路径中提取服务名
+      - regex:
+          source: filename
+          expression: '/var/log/work/(?P<service>[^/]+)/'
+      - labels:
+          service:
