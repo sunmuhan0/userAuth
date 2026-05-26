@@ -20,14 +20,25 @@ scrape_configs:
           env: dev
           __path__: /var/log/work/**/*.log
     pipeline_stages:
-      # 解析JSON日志，提取字段作为标签
+      # 第一层：解析JSON日志顶层字段
       - json:
           expressions:
             level: level
             trace_id: trace_id
             msg: msg
+            data: data
       - labels:
           level:
+          msg:
+      # 第二层：解析data字段中的path和method（access_log场景）
+      - json:
+          source: data
+          expressions:
+            path: path
+            method: method
+      - labels:
+          path:
+          method:
       # 从文件路径中提取服务名
       - regex:
           source: filename
