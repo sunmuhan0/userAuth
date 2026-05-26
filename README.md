@@ -1,6 +1,6 @@
 # 用户认证服务
 
-基于 Go + Gin + gRPC + MySQL + inji(DI) 的微服务架构鉴权系统。
+基于 Go + gRPC + MySQL + RocketMQ + inji(DI) 的微服务架构鉴权系统。
 
 ## 项目结构
 
@@ -17,10 +17,24 @@ ttuser/
 │   ├── internal/
 │   │   ├── dao/              # 数据访问层（UserDAO + TokenDAO）
 │   │   ├── model/            # 用户模型
-│   │   └── service/          # 业务逻辑（注册/登录/注销/续签/验证）
+│   │   └── service/          # 业务逻辑（注册/登录/注销/续签/验证 + 事件发布）
 │   ├── pkg/token/            # JWT 工具（access 2h + refresh 7d）
 │   ├── server/               # gRPC server 实现
 │   └── sp/                   # ServiceProvider（inji 依赖聚合）
+│
+├── event-producer/           # RocketMQ 通用生产者库
+│   └── producer/
+│       ├── interface.go      # IRmqPublisher 接口定义
+│       ├── config.go         # RMQConfig（NameServer + GroupName）
+│       └── publisher.go      # EventRMQPublisher 实现（Start/Publish/Close）
+│
+├── sms-consumer/             # 短信消费服务（RocketMQ PushConsumer）
+│   ├── cmd/server/main.go    # 入口（inji.Reg → sp.Init）
+│   ├── server/server.go      # RMQConfig + SMSConsumerServer（多topic订阅，按topic路由handler）
+│   ├── internal/
+│   │   ├── handler/          # SMSHandler（实现IMessageHandler）
+│   │   └── sms/              # Sender + Config（短信发送，当前模拟）
+│   └── sp/                   # ServiceProvider（注册handler到server）
 │
 ├── proc/                     # HTTP 网关（Gin）
 │   ├── cmd/server/main.go    # 入口
@@ -38,8 +52,6 @@ ttuser/
 │   │   ├── mysql.go          # BaseMysqlClient 通用实现
 │   │   └── proc.go           # ProcMysqlClient（DSN 配置）
 │   └── ddl/                  # 数据库 DDL
-│       ├── 001_create_users.sql
-│       └── 002_create_token_blacklist.sql
 │
 └── Makefile                  # 构建/测试/proto生成
 ```
@@ -50,10 +62,65 @@ ttuser/
 |------|------|
 | HTTP 网关 | Gin |
 | 服务间通信 | gRPC + Protobuf |
+| 消息队列 | Apache RocketMQ |
 | 依赖注入 | github.com/teou/inji |
 | 认证方案 | JWT（access_token 2h + refresh_token 7d，轮转续签） |
 | 数据存储 | MySQL |
 | 密码加密 | bcrypt |
+
+## 消息队列架构
+
+### 整体流程
+
+```
+用户注册 → auth-server → RocketMQ(topic=UserTopic, tag=registered, key=userID)
+                                ↓
+                         sms-consumer → 发送注册短信
+```
+
+### 生产端（event-producer）
+
+通用 RocketMQ 生产者库，任何服务引用后注入 `IRmqPublisher` 即可发消息：
+
+```go
+// 接口定义
+type IRmqPublisher interface {
+    Publish(topic string, tag string, key string, payload interface{}) error
+}
+
+// 业务调用示例（auth-server）
+s.EventPublisher.Publish("UserTopic", "registered", userID, payload)
+```
+
+- 配置（NameServer、GroupName）在 `producer/config.go` 的 `Start()` 中初始化
+- 通过 implmap 注册，业务方 inji 注入即可使用，无需手动构造
+
+### 消费端（sms-consumer）
+
+基于 RocketMQ PushConsumer，支持多 topic 订阅，按 topic 路由到对应 handler：
+
+```go
+// 订阅配置
+Subscriptions: []Subscription{
+    {Topic: "UserTopic", Tag: "registered", HandlerName: "userRegisteredHandler"},
+    // 新增订阅只需加一行
+}
+
+// handler 注册（ServiceProvider.Start()中）
+p.Server.RegisterHandler("userRegisteredHandler", p.SMSHandler)
+```
+
+- 每个 Subscription 指定 topic + tag + handler 名称
+- `SMSConsumerServer.Start()` 时按配置订阅，消息到达后路由到对应 handler
+- handler 实现 `IMessageHandler` 接口：`Handle(body []byte) error`
+
+### 扩展方式
+
+| 场景 | 操作 |
+|------|------|
+| auth-server 发新事件 | 定义新 payload，调用 `Publish("Topic", "tag", key, payload)` |
+| 其他服务也要发消息 | 引用 `event-producer`，inji 注入 `IRmqPublisher`，直接调用 |
+| sms-consumer 订阅新 topic | config 加 Subscription + 写新 handler + SP 注册 |
 
 ## 快速开始
 
@@ -61,6 +128,7 @@ ttuser/
 
 - Go 1.18+
 - MySQL 8.0+
+- Apache RocketMQ 4.x+（NameServer 默认 127.0.0.1:9876）
 - protoc + protoc-gen-go + protoc-gen-go-grpc
 
 ### 2. 初始化数据库
@@ -71,7 +139,17 @@ mysql -u root -p123456 ttuser < data-store/ddl/001_create_users.sql
 mysql -u root -p123456 ttuser < data-store/ddl/002_create_token_blacklist.sql
 ```
 
-### 3. 启动服务
+### 3. 启动 RocketMQ
+
+```bash
+# 启动 NameServer
+nohup sh mqnamesrv &
+
+# 启动 Broker
+nohup sh mqbroker -n 127.0.0.1:9876 &
+```
+
+### 4. 启动服务
 
 ```bash
 # 终端1：启动 auth-server (gRPC :9090)
@@ -79,15 +157,18 @@ cd auth-server && go run ./cmd/server/
 
 # 终端2：启动 proc (HTTP :8080)
 cd proc && go run ./cmd/server/
+
+# 终端3：启动 sms-consumer
+cd sms-consumer && go run ./cmd/server/
 ```
 
-### 4. 运行测试
+### 5. 运行测试
 
 ```bash
 make test         # 运行所有测试（单元 + e2e）
 make unit-test    # 只跑单元测试
 make e2e-test     # 自动编译→清数据→启动服务→跑 e2e→停服务
-make build        # 编译到 bin/
+make build        # 编译到 bin/（含 sms-consumer）
 make proto        # 重新生成 proto 代码
 make clean        # 清理编译产物
 ```
@@ -96,258 +177,39 @@ make clean        # 清理编译产物
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |------|------|------|------|
-| POST | `/api/v1/register` | 注册 | 否 |
+| POST | `/api/v1/register` | 注册（触发短信通知） | 否 |
 | POST | `/api/v1/login` | 登录 | 否 |
 | POST | `/api/v1/refresh` | 续签 token | 否 |
 | POST | `/api/v1/logout` | 注销 | 是 |
 | GET | `/api/v1/user/info` | 获取用户信息 | 是 |
 | PUT | `/api/v1/user/info` | 更新用户信息 | 是 |
 
-## curl 测试
-
-### 注册
-
-```bash
-curl -X POST http://localhost:8080/api/v1/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "testuser",
-    "password": "123456",
-    "nickname": "测试用户",
-    "email": "test@example.com"
-  }'
-```
-
-响应：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "id": "uuid-xxx",
-    "username": "testuser",
-    "nickname": "测试用户",
-    "email": "test@example.com"
-  }
-}
-```
-
-### 登录
-
-```bash
-curl -X POST http://localhost:8080/api/v1/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "testuser",
-    "password": "123456"
-  }'
-```
-
-响应：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "access_token": "eyJhbGciOi...",
-    "refresh_token": "eyJhbGciOi...",
-    "expires_at": 1779440478,
-    "user": {
-      "id": "uuid-xxx",
-      "username": "testuser",
-      "nickname": "测试用户",
-      "email": "test@example.com",
-      "avatar": ""
-    }
-  }
-}
-```
-
-### 获取用户信息
-
-```bash
-curl http://localhost:8080/api/v1/user/info \
-  -H "Authorization: Bearer <access_token>"
-```
-
-响应：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "id": "uuid-xxx",
-    "username": "testuser",
-    "nickname": "测试用户",
-    "email": "test@example.com",
-    "avatar": "",
-    "created_at": 1779441441,
-    "updated_at": 1779441441
-  }
-}
-```
-
-### 更新用户信息
-
-```bash
-curl -X PUT http://localhost:8080/api/v1/user/info \
-  -H "Authorization: Bearer <access_token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "nickname": "新昵称",
-    "email": "new@example.com",
-    "avatar": "https://example.com/avatar.png"
-  }'
-```
-
-### 续签 Token
-
-```bash
-curl -X POST http://localhost:8080/api/v1/refresh \
-  -H "Content-Type: application/json" \
-  -d '{
-    "refresh_token": "<refresh_token>"
-  }'
-```
-
-响应：
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "access_token": "eyJhbGciOi...(新)",
-    "refresh_token": "eyJhbGciOi...(新)",
-    "expires_at": 1779447678
-  }
-}
-```
-
-> 注意：续签后旧的 refresh_token 立即失效（轮转模式）。
-
-### 注销
-
-```bash
-curl -X POST http://localhost:8080/api/v1/logout \
-  -H "Authorization: Bearer <access_token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "refresh_token": "<refresh_token>"
-  }'
-```
-
-响应：
-```json
-{
-  "code": 0,
-  "message": "logout success"
-}
-```
-
-> 注销后 access_token 和 refresh_token 同时失效。
-
-### 错误响应示例
-
-```bash
-# 无 token 访问需要鉴权的接口
-curl http://localhost:8080/api/v1/user/info
-# {"code":401,"message":"authorization header is required"}
-
-# 注销后再访问
-curl http://localhost:8080/api/v1/user/info -H "Authorization: Bearer <已注销的token>"
-# {"code":401,"message":"invalid or expired token: token has been revoked"}
-
-# 重复注册
-curl -X POST http://localhost:8080/api/v1/register -H "Content-Type: application/json" -d '{"username":"testuser","password":"123"}'
-# {"code":409,"message":"rpc error: code = AlreadyExists desc = username already exists"}
-
-# 旧 refresh_token 续签（已轮转作废）
-curl -X POST http://localhost:8080/api/v1/refresh -H "Content-Type: application/json" -d '{"refresh_token":"<旧token>"}'
-# {"code":401,"message":"refresh failed: rpc error: code = Unauthenticated desc = token has been revoked"}
-```
-
-## 完整 curl 测试脚本
-
-```bash
-#!/bin/bash
-BASE_URL="http://localhost:8080/api/v1"
-
-echo "=== 1. 注册 ==="
-curl -s -X POST $BASE_URL/register \
-  -H "Content-Type: application/json" \
-  -d '{"username":"demo","password":"123456","nickname":"Demo","email":"demo@test.com"}'
-echo ""
-
-echo "=== 2. 登录 ==="
-LOGIN=$(curl -s -X POST $BASE_URL/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"demo","password":"123456"}')
-echo "$LOGIN" | python3 -m json.tool
-
-ACCESS_TOKEN=$(echo "$LOGIN" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['access_token'])")
-REFRESH_TOKEN=$(echo "$LOGIN" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['refresh_token'])")
-
-echo "=== 3. 获取用户信息 ==="
-curl -s $BASE_URL/user/info -H "Authorization: Bearer $ACCESS_TOKEN" | python3 -m json.tool
-echo ""
-
-echo "=== 4. 更新用户信息 ==="
-curl -s -X PUT $BASE_URL/user/info \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"nickname":"Demo改名","email":"new@test.com"}' | python3 -m json.tool
-echo ""
-
-echo "=== 5. 续签 Token ==="
-REFRESH_RESP=$(curl -s -X POST $BASE_URL/refresh \
-  -H "Content-Type: application/json" \
-  -d "{\"refresh_token\":\"$REFRESH_TOKEN\"}")
-echo "$REFRESH_RESP" | python3 -m json.tool
-NEW_AT=$(echo "$REFRESH_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['access_token'])")
-NEW_RT=$(echo "$REFRESH_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['refresh_token'])")
-
-echo "=== 6. 旧 refresh_token 再次使用（应失败） ==="
-curl -s -X POST $BASE_URL/refresh \
-  -H "Content-Type: application/json" \
-  -d "{\"refresh_token\":\"$REFRESH_TOKEN\"}" | python3 -m json.tool
-echo ""
-
-echo "=== 7. 注销 ==="
-curl -s -X POST $BASE_URL/logout \
-  -H "Authorization: Bearer $NEW_AT" \
-  -H "Content-Type: application/json" \
-  -d "{\"refresh_token\":\"$NEW_RT\"}" | python3 -m json.tool
-echo ""
-
-echo "=== 8. 注销后访问（应失败） ==="
-curl -s $BASE_URL/user/info -H "Authorization: Bearer $NEW_AT" | python3 -m json.tool
-echo ""
-```
-
 ## 架构设计
 
 ### 依赖注入（inji）
 
-所有组件通过 inji 的 `inject` tag 自动装配。ServiceProvider 中字段顺序即创建顺序：
+所有组件通过 inji 的 `inject` tag 自动装配。ServiceProvider 只声明外部需要访问的顶层组件，中间依赖由 inji 自动递归创建：
 
 ```
 auth-server ServiceProvider:
-  ProcMysql(Start()建连) → UserDAO(inject engine) → TokenDAO(inject engine)
-  → TokenMgr(Start()加载配置) → AuthService(inject DAO+TokenMgr)
-  → GRPCServer(inject authService)
+  GRPCServer → AuthService → UserDAO/TokenDAO/TokenMgr/EventPublisher
+                                                        ↓
+                                              RMQConfig → EventRMQPublisher(Start()连接RocketMQ)
 
-proc ServiceProvider:
-  AuthManager → AuthClient(Start()建连 gRPC)
+sms-consumer ServiceProvider:
+  SMSHandler + SMSConsumerServer
+  Start()中注册 handler → Server
+  Server.Start()订阅RocketMQ → 消息到达 → 路由到handler → 发短信
 ```
 
 ### 认证流程
 
 ```
-注册: POST /register → proc → gRPC → auth-server → bcrypt加密 → MySQL
+注册: POST /register → proc → gRPC → auth-server → bcrypt加密 → MySQL → 发RocketMQ事件 → sms-consumer发短信
 登录: POST /login → proc → gRPC → auth-server → 验密 → 签发 access+refresh token
-请求: GET /user/info → proc filter → gRPC ValidateToken → auth-server → 检查黑名单+解析JWT
-续签: POST /refresh → proc → gRPC → auth-server → 验证refresh → 旧token加黑名单 → 签发新pair
-注销: POST /logout → proc filter → gRPC → auth-server → access+refresh 加入黑名单
+请求: GET /user/info → proc filter → gRPC ValidateToken → 检查黑名单+解析JWT
+续签: POST /refresh → proc → gRPC → auth-server → 旧token加黑名单 → 签发新pair
+注销: POST /logout → proc filter → gRPC → access+refresh 加入黑名单
 ```
 
 ### Token 策略
@@ -363,7 +225,7 @@ proc ServiceProvider:
 
 ## 配置说明
 
-当前所有配置写死在代码中（带 `TODO: 后续从配置中心获取` 注释），后续接入配置中心只需修改对应位置：
+当前所有配置写死在代码中（带 `TODO: 后续从配置中心获取` 注释），后续接入配置中心只需修改对应 `Start()` 方法：
 
 | 配置项 | 当前默认值 | 位置 |
 |--------|-----------|------|
@@ -374,3 +236,7 @@ proc ServiceProvider:
 | auth-server gRPC 端口 | 9090 | `auth-server/server/grpc_server.go` |
 | auth-client gRPC 地址 | `localhost:9090` | `auth-client/client/client.go` |
 | proc HTTP 端口 | 8080 | `proc/cmd/server/main.go` (env: HTTP_PORT) |
+| RocketMQ NameServer | `127.0.0.1:9876` | `event-producer/producer/config.go` |
+| RocketMQ Producer Group | `ttuser-producer-group` | `event-producer/producer/config.go` |
+| RocketMQ Consumer Group | `sms-consumer-group` | `sms-consumer/server/server.go` |
+| 短信签名 | `TT用户平台` | `sms-consumer/internal/sms/config.go` |
