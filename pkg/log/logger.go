@@ -20,13 +20,13 @@ var sugar *zap.SugaredLogger
 type LogConfig struct {
 	ServiceName string // 服务名，如 "auth-server"
 	Port        int    // 服务端口，如 9090
-	LogDir      string // 日志根目录，默认 /var/log/work
+	LogDir      string // 日志根目录，默认 /home/work/log
 }
 
 // DefaultLogConfig 默认日志配置
 func DefaultLogConfig() *LogConfig {
 	return &LogConfig{
-		LogDir: "/var/log/work",
+		LogDir: "/home/work/log",
 	}
 }
 

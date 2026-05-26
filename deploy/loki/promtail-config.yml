@@ -18,7 +18,7 @@ scrape_configs:
         labels:
           job: ttuser
           env: dev
-          __path__: /var/log/work/**/*.log
+          __path__: /home/work/log/**/*.log
     pipeline_stages:
       # 第一层：解析JSON日志顶层字段
       - json:
@@ -42,6 +42,6 @@ scrape_configs:
       # 从文件路径中提取服务名
       - regex:
           source: filename
-          expression: '/var/log/work/(?P<service>[^/]+)/'
+          expression: '/home/work/log/(?P<service>[^/]+)/'
       - labels:
           service:

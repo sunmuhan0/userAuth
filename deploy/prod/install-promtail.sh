@@ -17,7 +17,7 @@ mv promtail-linux-amd64 /usr/local/bin/promtail
 echo "=== 2. 创建配置目录 ==="
 mkdir -p /etc/promtail
 mkdir -p /var/lib/promtail
-mkdir -p /var/log/work
+mkdir -p /home/work/log
 
 echo "=== 3. 复制配置文件 ==="
 cp promtail-config.yml /etc/promtail/config.yml
@@ -34,7 +34,7 @@ systemctl status promtail --no-pager
 echo ""
 echo "=== 安装完成 ==="
 echo "配置文件：/etc/promtail/config.yml"
-echo "日志采集目录：/var/log/work/**/*.log"
+echo "日志采集目录：/home/work/log/**/*.log"
 echo "查看日志：journalctl -u promtail -f"
 echo ""
 echo "注意：请修改 /etc/promtail/config.yml 中的 Loki 地址为实际生产地址"
