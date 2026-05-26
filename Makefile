@@ -1,4 +1,4 @@
-.PHONY: build build-auth-server build-proc build-async-handler test unit-test e2e-test clean proto install deploy stop status
+.PHONY: build build-auth-server build-proc build-async-handler build-config-server test unit-test e2e-test clean proto install deploy stop status
 
 # ==================== 配置 ====================
 BIN_DIR := ./bin
@@ -10,7 +10,7 @@ AUTH_SERVER_PORT := 9090
 PROC_PORT := 8080
 
 # ==================== 编译 ====================
-build: build-auth-server build-proc build-async-handler
+build: build-auth-server build-proc build-async-handler build-config-server
 
 build-auth-server:
 	@echo "[build] auth-server..."
@@ -23,6 +23,10 @@ build-proc:
 build-async-handler:
 	@echo "[build] async-handler..."
 	@cd async-handler && go build -o ../$(BIN_DIR)/async-handler ./cmd/server/
+
+build-config-server:
+	@echo "[build] config-server..."
+	@cd config-server && go build -o ../$(BIN_DIR)/config-server ./cmd/server/
 
 # ==================== 一键安装 ====================
 install: build
