@@ -5,26 +5,32 @@ import (
 	"reflect"
 
 	"github.com/teou/implmap"
+	"github.com/teou/inji"
+
+	configclient "ttuser/config-client/client"
 )
 
 func init() {
 	implmap.Add("procMysqlClient", reflect.TypeOf((*ProcMysqlClient)(nil)))
 }
 
-// proc 服务 MySQL 配置，后续从配置中心获取
-const procDSN = "root:123456@tcp(localhost:3306)/ttuser?charset=utf8mb4&parseTime=true&loc=Local"
-
-// ProcMysqlClient proc 服务的 MySQL 客户端
-// 内嵌 BaseMysqlClient 复用通用实现
-// 通过 inji 自动注册：inject:"procMysqlClient"
 type ProcMysqlClient struct {
 	BaseMysqlClient
 }
 
-// Start 实现 inji.Startable 接口
 func (c *ProcMysqlClient) Start() error {
-	if err := c.Connect(procDSN); err != nil {
-		return err
+	svc := "auth-server"
+	if v, ok := inji.Find("serverName"); ok {
+		svc = v.(string)
+	}
+	var mysqlConf struct {
+		DSN string `json:"dsn"`
+	}
+	if err := configclient.LoadFile(svc, "mysql.json", &mysqlConf); err != nil {
+		return fmt.Errorf("[ProcMysqlClient] load mysql config failed: %w", err)
+	}
+	if err := c.Connect(mysqlConf.DSN); err != nil {
+		return fmt.Errorf("[ProcMysqlClient] connect failed: %w", err)
 	}
 	fmt.Println("[ProcMysqlClient] connected to mysql")
 	return nil

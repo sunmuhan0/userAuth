@@ -16,8 +16,9 @@ const (
 )
 
 var (
-	authServerProcess *os.Process
-	procProcess       *os.Process
+	configServerProcess *os.Process
+	authServerProcess   *os.Process
+	procProcess         *os.Process
 )
 
 func TestMain(m *testing.M) {
@@ -26,20 +27,32 @@ func TestMain(m *testing.M) {
 		"TRUNCATE TABLE users; TRUNCATE TABLE token_blacklist;").Run()
 
 	// 编译
+	exec.Command("go", "build", "-o", "/tmp/e2e_config_server", "./cmd/server/").
+		Run()
 	exec.Command("go", "build", "-o", "/tmp/e2e_auth_server", "./cmd/server/").
 		Run()
 	exec.Command("go", "build", "-o", "/tmp/e2e_proc", "./cmd/server/").
 		Run()
 
-	// 启动 auth-server (e2e 目录在 proc/e2e，向上两级是项目根目录)
-	cmd1 := exec.Command("/tmp/e2e_auth_server")
-	cmd1.Dir = "../.." + "/auth-server"
+	// 启动 config-server (e2e 目录在 proc/e2e，向上两级是项目根目录)
+	cmd0 := exec.Command("/tmp/e2e_config_server",
+		"-name=config-server", "-port=7963", "-env=test")
+	cmd0.Dir = "../../config-server"
+	cmd0.Start()
+	configServerProcess = cmd0.Process
+	time.Sleep(1 * time.Second)
+
+	// 启动 auth-server
+	cmd1 := exec.Command("/tmp/e2e_auth_server",
+		"-name=auth-server", "-port=9090", "-env=test")
+	cmd1.Dir = "../../auth-server"
 	cmd1.Start()
 	authServerProcess = cmd1.Process
 	time.Sleep(2 * time.Second)
 
 	// 启动 proc
-	cmd2 := exec.Command("/tmp/e2e_proc")
+	cmd2 := exec.Command("/tmp/e2e_proc",
+		"-name=proc", "-port=8080", "-env=test")
 	cmd2.Dir = ".."
 	cmd2.Start()
 	procProcess = cmd2.Process
@@ -56,6 +69,9 @@ func TestMain(m *testing.M) {
 	}
 	if authServerProcess != nil {
 		authServerProcess.Kill()
+	}
+	if configServerProcess != nil {
+		configServerProcess.Kill()
 	}
 
 	os.Exit(code)

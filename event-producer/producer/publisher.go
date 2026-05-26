@@ -78,6 +78,45 @@ func (p *EventRMQPublisher) Publish(ctx context.Context, topic string, tag strin
 	return nil
 }
 
+// PublishBatch 批量发布消息（同一topic + tag，一次网络发送）
+// 批量发送减少网络开销，提高吞吐量
+// 注意：RocketMQ批量消息的总大小不能超过4MB
+func (p *EventRMQPublisher) PublishBatch(ctx context.Context, topic string, tag string, payloads []interface{}) error {
+	if len(payloads) == 0 {
+		return nil
+	}
+
+	traceID := trace.GetTraceID(ctx)
+	msgs := make([]*primitive.Message, 0, len(payloads))
+
+	for _, payload := range payloads {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("failed to marshal payload: %w", err)
+		}
+
+		msg := &primitive.Message{
+			Topic: topic,
+			Body:  body,
+		}
+		msg.WithTag(tag)
+		if traceID != "" {
+			msg.WithKeys([]string{traceID})
+		}
+		msgs = append(msgs, msg)
+	}
+
+	result, err := p.producer.SendSync(ctx, msgs...)
+	if err != nil {
+		return fmt.Errorf("failed to publish batch [topic=%s, tag=%s, count=%d, trace_id=%s]: %w",
+			topic, tag, len(payloads), traceID, err)
+	}
+
+	fmt.Printf("[event-producer] published batch: topic=%s, tag=%s, count=%d, trace_id=%s, msgId=%s\n",
+		topic, tag, len(payloads), traceID, result.MsgID)
+	return nil
+}
+
 // Close 实现 inji.Closeable 接口
 func (p *EventRMQPublisher) Close() {
 	if p.producer != nil {

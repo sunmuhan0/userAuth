@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/teou/inji"
 
 	configclient "ttuser/config-client/client"
 )
@@ -21,14 +22,6 @@ var (
 	ErrTokenTypeMismatch = errors.New("token type mismatch")
 )
 
-// 默认配置
-const (
-	defaultSecret        = "my-secret-key-for-ttuser-2024"
-	defaultAccessExpire  = 2 * time.Hour
-	defaultRefreshExpire = 7 * 24 * time.Hour
-)
-
-// Claims 自定义JWT Claims
 type Claims struct {
 	UserID    string `json:"user_id"`
 	Username  string `json:"username"`
@@ -36,48 +29,42 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// JWTManager JWT实现的token管理器
 type JWTManager struct {
 	Secret            string
 	AccessExpireTime  time.Duration
 	RefreshExpireTime time.Duration
 }
 
-// Start 实现 inji.Startable 接口，支持自动注册
 func (m *JWTManager) Start() error {
-	m.init()
-	return nil
+	return m.init()
 }
 
-func (m *JWTManager) init() {
-	// 尝试从配置中心获取
-	cfg := configclient.DefaultConfig()
-	cfg.ServiceName = "auth-server"
-	cc := configclient.New(cfg)
-	if err := cc.Start(0); err == nil {
-		var jwtConf struct {
-			Secret        string `json:"secret"`
-			AccessExpire  string `json:"access_expire"`
-			RefreshExpire string `json:"refresh_expire"`
-		}
-		if err := cc.Get("jwt", &jwtConf); err == nil {
-			m.Secret = jwtConf.Secret
-			if d, err := time.ParseDuration(jwtConf.AccessExpire); err == nil {
-				m.AccessExpireTime = d
-			}
-			if d, err := time.ParseDuration(jwtConf.RefreshExpire); err == nil {
-				m.RefreshExpireTime = d
-			}
-			fmt.Println("[JWTManager] config loaded from config-center")
-			return
-		}
+func (m *JWTManager) init() error {
+	var jwtConf struct {
+		Secret        string `json:"secret"`
+		AccessExpire  string `json:"access_expire"`
+		RefreshExpire string `json:"refresh_expire"`
 	}
-
-	// 配置中心不可用，使用默认值
-	fmt.Println("[JWTManager] config-center unavailable, using defaults")
-	m.Secret = defaultSecret
-	m.AccessExpireTime = defaultAccessExpire
-	m.RefreshExpireTime = defaultRefreshExpire
+	svc := "auth-server"
+	if v, ok := inji.Find("serverName"); ok {
+		svc = v.(string)
+	}
+	if err := configclient.LoadFile(svc, "jwt.json", &jwtConf); err != nil {
+		return fmt.Errorf("[JWTManager] load jwt config failed: %w", err)
+	}
+	m.Secret = jwtConf.Secret
+	if d, err := time.ParseDuration(jwtConf.AccessExpire); err == nil {
+		m.AccessExpireTime = d
+	} else {
+		m.AccessExpireTime = 2 * time.Hour
+	}
+	if d, err := time.ParseDuration(jwtConf.RefreshExpire); err == nil {
+		m.RefreshExpireTime = d
+	} else {
+		m.RefreshExpireTime = 7 * 24 * time.Hour
+	}
+	fmt.Println("[JWTManager] config loaded from config-center")
+	return nil
 }
 
 // Generate 生成access token

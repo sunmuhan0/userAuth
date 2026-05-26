@@ -11,6 +11,9 @@ func WithTraceID(ctx context.Context, traceID string) context.Context {
 
 // GetTraceID 从context取出trace_id，不存在返回空字符串
 func GetTraceID(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
 	val := ctx.Value(traceKey{})
 	if val == nil {
 		return ""

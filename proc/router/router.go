@@ -2,6 +2,7 @@ package router
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"ttuser/proc/filter"
 	"ttuser/proc/internal/handler"
@@ -18,8 +19,14 @@ func (r *Router) Setup() *gin.Engine {
 	r.Engine = gin.Default()
 
 	// 全局中间件（所有请求最先经过）
-	r.Engine.Use(filter.TraceFilter())     // 1. 生成/提取 trace_id
-	r.Engine.Use(filter.AccessLogFilter()) // 2. 记录 access log（请求+响应）
+	r.Engine.Use(filter.TraceFilter())            // 1. 生成/提取 trace_id
+	r.Engine.Use(filter.AccessLogFilter())        // 2. 记录 access log（请求+响应）
+	r.Engine.Use(filter.MetricsFilter())          // 3. Prometheus 指标采集
+
+	// Prometheus metrics端点（无需鉴权）
+	r.Engine.GET("/metrics", func(c *gin.Context) {
+		promhttp.Handler().ServeHTTP(c.Writer, c.Request)
+	})
 
 	authHandler := &handler.AuthHandler{}
 	authFilter := &filter.AuthFilter{}

@@ -5,16 +5,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
+	"github.com/teou/inji"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 
 	"ttuser/pkg/trace"
 )
 
 var logger *zap.Logger
 var sugar *zap.SugaredLogger
+
+func init() {
+	// 默认初始化（仅stdout），应用启动时 main 中调用 Init 重新初始化
+	initLogger(nil, nil)
+}
 
 // LogConfig 日志配置
 type LogConfig struct {
@@ -23,20 +29,59 @@ type LogConfig struct {
 	LogDir      string // 日志根目录，默认 /home/work/log
 }
 
-// DefaultLogConfig 默认日志配置
+// DefaultLogConfig 默认日志配置，从 inji 容器获取服务名和端口
+// main 中先注册：
+//
+//	inji.Reg("serverName", "auth-server")
+//	inji.Reg("serverPort", "9090")
 func DefaultLogConfig() *LogConfig {
+	svc := "auth-server"
+	if v, ok := inji.Find("serverName"); ok {
+		if s, ok := v.(string); ok && s != "" {
+			svc = s
+		}
+	}
+	port := 9090
+	if v, ok := inji.Find("serverPort"); ok {
+		switch val := v.(type) {
+		case string:
+			if p, err := fmt.Sscanf(val, "%d", &port); err != nil || p != 1 {
+				port = 9090
+			}
+		case int:
+			port = val
+		}
+	}
 	return &LogConfig{
-		LogDir: "/home/work/log",
+		ServiceName: svc,
+		Port:        port,
+		LogDir:      "/home/work/log",
 	}
 }
 
-func init() {
-	// 默认初始化（仅stdout），应用启动时应调用 Init() 重新初始化
-	initLogger(nil, nil)
+// lumberjackLogger 默认日志轮转配置
+func newLumberjackWriter(logDir, serviceName string, port int) zapcore.WriteSyncer {
+	logFile := filepath.Join(logDir, fmt.Sprintf("%s_%d.log", serviceName, port))
+	dir := filepath.Dir(logFile)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fmt.Printf("[log] failed to create log dir %s: %v\n", dir, err)
+		return nil
+	}
+	lw := &lumberjack.Logger{
+		Filename:   logFile,
+		MaxSize:    100, // MB
+		MaxAge:     30,  // days
+		MaxBackups: 10,
+		LocalTime:  true,
+		Compress:   true,
+	}
+	fmt.Printf("[log] writing to file: %s (maxSize=%dMB, maxAge=%dd, maxBackups=%d, compress=%t)\n",
+		logFile, 100, 30, 10, true)
+	return zapcore.AddSync(lw)
 }
 
 // Init 初始化日志（输出到stdout + 文件）
-// 日志文件路径：{logDir}/{serviceName}_{port}/20260526.log
+// 日志文件路径：{logDir}/{serviceName}_{port}/app.log
 func Init(config *LogConfig) {
 	if config == nil {
 		config = DefaultLogConfig()
@@ -44,55 +89,10 @@ func Init(config *LogConfig) {
 
 	var fileWriter zapcore.WriteSyncer
 	if config.ServiceName != "" && config.Port > 0 {
-		dir := filepath.Join(config.LogDir, fmt.Sprintf("%s_%d", config.ServiceName, config.Port))
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			fmt.Printf("[log] failed to create log dir %s: %v\n", dir, err)
-		} else {
-			logFile := filepath.Join(dir, time.Now().Format("20060102")+".log")
-			f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-			if err != nil {
-				fmt.Printf("[log] failed to open log file %s: %v\n", logFile, err)
-			} else {
-				fileWriter = zapcore.AddSync(f)
-				fmt.Printf("[log] writing to file: %s\n", logFile)
-			}
-		}
+		fileWriter = newLumberjackWriter(config.LogDir, config.ServiceName, config.Port)
 	}
 
 	initLogger(fileWriter, nil)
-}
-
-// InitWithLoki 初始化日志并启用Loki推送（输出到stdout + 文件 + Loki）
-// 在应用启动时调用
-func InitWithLoki(config *LogConfig, lokiConfig *LokiConfig) {
-	if config == nil {
-		config = DefaultLogConfig()
-	}
-
-	var fileWriter zapcore.WriteSyncer
-	if config.ServiceName != "" && config.Port > 0 {
-		dir := filepath.Join(config.LogDir, fmt.Sprintf("%s_%d", config.ServiceName, config.Port))
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			fmt.Printf("[log] failed to create log dir %s: %v\n", dir, err)
-		} else {
-			logFile := filepath.Join(dir, time.Now().Format("20060102")+".log")
-			f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-			if err != nil {
-				fmt.Printf("[log] failed to open log file %s: %v\n", logFile, err)
-			} else {
-				fileWriter = zapcore.AddSync(f)
-				fmt.Printf("[log] writing to file: %s\n", logFile)
-			}
-		}
-	}
-
-	InitLoki(lokiConfig)
-	var lokiWriter zapcore.WriteSyncer
-	if lokiConfig != nil && lokiConfig.Enable {
-		lokiWriter = &lokiWriteSyncer{}
-	}
-
-	initLogger(fileWriter, lokiWriter)
 }
 
 // initLogger 初始化zap logger

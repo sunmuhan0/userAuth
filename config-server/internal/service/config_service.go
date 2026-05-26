@@ -1,37 +1,68 @@
 package service
 
 import (
-	"ttuser/config-server/internal/dao"
-	"ttuser/config-server/internal/model"
-	"ttuser/pkg/crypto"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
-// ConfigService 配置管理服务
+// ConfigFile 配置文件信息
+type ConfigFile struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+// ConfigService 配置管理服务，从文件系统读取配置
 type ConfigService struct {
-	ConfigDAO *dao.ConfigDAO `inject:"configDAO"`
+	ConfigDir string // 配置根目录，如 ./config-center
 }
 
-// Get 获取单个配置
-func (s *ConfigService) Get(service, key string) (*model.Config, error) {
-	return s.ConfigDAO.Get(service, key)
+// NewConfigService 创建配置服务
+func NewConfigService(configDir string) *ConfigService {
+	return &ConfigService{ConfigDir: configDir}
 }
 
-// List 获取服务的所有配置
-func (s *ConfigService) List(service string) ([]*model.Config, error) {
-	return s.ConfigDAO.List(service)
-}
+// ListFiles 获取合并后的配置文件列表
+// 先加载 base/{service}/，再加载 {env}/{service}/，同名文件 env 覆盖 base
+func (s *ConfigService) ListFiles(env, service string) ([]ConfigFile, error) {
+	files := make(map[string]string)
 
-// Set 创建或更新配置（明文存储）
-func (s *ConfigService) Set(service, key, value string) error {
-	return s.ConfigDAO.Set(service, key, value, 0)
-}
-
-// SetEncrypted 创建或更新配置（加密存储）
-// 对value进行AES加密后存入数据库
-func (s *ConfigService) SetEncrypted(service, key, value string) error {
-	encrypted, err := crypto.Encrypt(value)
-	if err != nil {
-		return err
+	// 1. 加载 base/{service}/
+	baseDir := filepath.Join(s.ConfigDir, "base", service)
+	if entries, err := os.ReadDir(baseDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+				data, err := os.ReadFile(filepath.Join(baseDir, e.Name()))
+				if err != nil {
+					return nil, fmt.Errorf("read base config file %s failed: %w", e.Name(), err)
+				}
+				files[e.Name()] = string(data)
+			}
+		}
 	}
-	return s.ConfigDAO.Set(service, key, encrypted, 1)
+
+	// 2. 加载 {env}/{service}/，覆盖同名文件
+	envDir := filepath.Join(s.ConfigDir, env, service)
+	if entries, err := os.ReadDir(envDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+				data, err := os.ReadFile(filepath.Join(envDir, e.Name()))
+				if err != nil {
+					return nil, fmt.Errorf("read env config file %s failed: %w", e.Name(), err)
+				}
+				files[e.Name()] = string(data)
+			}
+		}
+	}
+
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no config files found for env=%s, service=%s", env, service)
+	}
+
+	result := make([]ConfigFile, 0, len(files))
+	for name, content := range files {
+		result = append(result, ConfigFile{Name: name, Content: content})
+	}
+	return result, nil
 }

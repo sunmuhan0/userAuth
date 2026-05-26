@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,15 +20,26 @@ type BaseMysqlClient struct {
 }
 
 // Connect 建立连接
+// 连接池参数可通过环境变量覆盖：
+//   MYSQL_MAX_OPEN_CONNS  - 最大打开连接数（默认20）
+//   MYSQL_MAX_IDLE_CONNS  - 最大空闲连接数（默认10）
+//   MYSQL_CONN_MAX_LIFETIME - 连接最大存活时间（分钟，默认5）
 func (c *BaseMysqlClient) Connect(dsn string) error {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return fmt.Errorf("failed to open mysql: %w", err)
 	}
 
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	maxOpen := getEnvInt("MYSQL_MAX_OPEN_CONNS", 20)
+	maxIdle := getEnvInt("MYSQL_MAX_IDLE_CONNS", 10)
+	maxLifetime := getEnvInt("MYSQL_CONN_MAX_LIFETIME", 5)
+
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
+	db.SetConnMaxLifetime(time.Duration(maxLifetime) * time.Minute)
+
+	fmt.Printf("[mysql] connection pool: maxOpen=%d, maxIdle=%d, maxLifetime=%dm\n",
+		maxOpen, maxIdle, maxLifetime)
 
 	if err := db.Ping(); err != nil {
 		return fmt.Errorf("failed to ping mysql: %w", err)
@@ -34,6 +47,16 @@ func (c *BaseMysqlClient) Connect(dsn string) error {
 
 	c.db = db
 	return nil
+}
+
+// getEnvInt 获取环境变量整数值，不存在则返回默认值
+func getEnvInt(key string, defaultVal int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return defaultVal
 }
 
 // CloseDB 关闭连接

@@ -2,8 +2,10 @@ package client
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 
+	"github.com/teou/inji"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -14,10 +16,7 @@ import (
 )
 
 const (
-	// 默认gRPC地址，后续从配置中心获取
 	defaultAddr = "localhost:9090"
-	// CA 证书路径，后续从配置中心获取
-	defaultCACert = "../certs/ca.pem"
 )
 
 // IAuthServiceClient 内嵌生成的 gRPC client 接口，方便直接调用 RPC 方法
@@ -46,30 +45,26 @@ func (c *AuthClient) Close() {
 }
 
 func (c *AuthClient) init() error {
-	addr := defaultAddr
-	caCert := defaultCACert
-
-	// 尝试从配置中心获取
-	cfg := configclient.DefaultConfig()
-	cfg.ServiceName = "proc"
-	cc := configclient.New(cfg)
-	if err := cc.Start(0); err == nil {
-		var authConf struct {
-			Addr   string `json:"addr"`
-			CACert string `json:"ca_cert"`
-		}
-		if err := cc.Get("auth-client", &authConf); err == nil {
-			addr = authConf.Addr
-			caCert = authConf.CACert
-			fmt.Println("[AuthClient] config loaded from config-center")
-		}
+	var authConf struct {
+		Addr   string `json:"addr"`
+		CACert string `json:"ca_cert"`
+	}
+	svc := "proc"
+	if v, ok := inji.Find("serverName"); ok {
+		svc = v.(string)
+	}
+	if err := configclient.LoadFile(svc, "auth-client.json", &authConf); err != nil {
+		return fmt.Errorf("[AuthClient] load auth-client config failed: %w", err)
 	}
 
-	// 加载 CA 证书用于验证服务端
-	creds, err := credentials.NewClientTLSFromFile(caCert, "localhost")
-	if err != nil {
-		return fmt.Errorf("failed to load CA certificate from %s: %w", caCert, err)
+	addr := authConf.Addr
+	if addr == "" {
+		addr = defaultAddr
 	}
+
+	cp := x509.NewCertPool()
+	cp.AppendCertsFromPEM([]byte(authConf.CACert))
+	creds := credentials.NewClientTLSFromCert(cp, "localhost")
 
 	conn, err := grpc.Dial(addr,
 		grpc.WithTransportCredentials(creds),

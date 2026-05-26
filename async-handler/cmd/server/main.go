@@ -1,22 +1,49 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/teou/inji"
 
 	"ttuser/async-handler/sp"
+	configclient "ttuser/config-client/client"
+	"ttuser/pkg/log"
 )
 
 func main() {
+	name := flag.String("name", "async-handler", "service name")
+	port := flag.Int("port", 0, "service port")
+	env := flag.String("env", "prod", "deploy environment: prod/staging/preview")
+	flag.Parse()
+
 	fmt.Println("[sms-consumer] starting...")
 
 	// ========== 初始化inji依赖注入容器 ==========
 	inji.InitDefault()
-	defer inji.Close()
+
+	// ========== 注册服务标识与运行环境 ==========
+	inji.Reg("serverName", *name)
+	inji.Reg("serverPort", fmt.Sprintf("%d", *port))
+	inji.Reg("env", *env)
+
+	// ========== 初始化日志 ==========
+	log.Init(nil)
+	defer log.Sync()
+
+	// ========== 从配置中心拉取配置文件 ==========
+	cc := configclient.New(&configclient.Config{
+		Env:         *env,
+		ServiceName: *name,
+	})
+	if err := cc.FetchConfigs(); err != nil {
+		fmt.Printf("[sms-consumer] fetch configs failed: %v\n", err)
+		os.Exit(1)
+	}
 
 	// ========== 注册ServiceProvider ==========
 	inji.Reg("serviceProvider", (*sp.ServiceProvider)(nil))
@@ -27,8 +54,21 @@ func main() {
 	// ========== 等待信号 ==========
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	sig := <-quit
 
-	fmt.Println("\n[sms-consumer] shutting down...")
+	fmt.Printf("\n[sms-consumer] received signal %v, shutting down...\n", sig)
+
+	closeDone := make(chan struct{})
+	go func() {
+		inji.Close()
+		close(closeDone)
+	}()
+	select {
+	case <-closeDone:
+		fmt.Println("[sms-consumer] resources closed gracefully")
+	case <-time.After(10 * time.Second):
+		fmt.Println("[sms-consumer] resource close timeout, force shutdown")
+	}
+
 	fmt.Println("[sms-consumer] stopped")
 }

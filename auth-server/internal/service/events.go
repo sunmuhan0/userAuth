@@ -4,8 +4,6 @@ package service
 const (
 	TopicUser         = "UserTopic"
 	TagUserRegistered = "registered"
-	TagUserUpdated    = "updated"
-	TagUserDeleted    = "deleted"
 )
 
 // UserRegisteredPayload 用户注册事件载荷

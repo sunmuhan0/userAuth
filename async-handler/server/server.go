@@ -8,6 +8,7 @@ import (
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/consumer"
 	"github.com/apache/rocketmq-client-go/v2/primitive"
+	"github.com/teou/inji"
 
 	"ttuser/async-handler/biz/register"
 	"ttuser/async-handler/pkg/router"
@@ -16,30 +17,24 @@ import (
 )
 
 // RMQConfig RocketMQ消费者配置
-// Start时从配置中心获取，获取失败则用默认值
+// Start时从配置中心获取
 type RMQConfig struct {
 	NameServer string
 }
 
 // Start 实现 inji.Startable 接口
 func (c *RMQConfig) Start() error {
-	cfg := configclient.DefaultConfig()
-	cfg.ServiceName = "async-handler"
-	cc := configclient.New(cfg)
-	if err := cc.Start(0); err != nil {
-		fmt.Printf("[rmqConfig] config-center unavailable, using defaults: %v\n", err)
-		c.NameServer = "127.0.0.1:9876"
-	} else {
-		var rmqConf struct {
-			NameServer string `json:"name_server"`
-		}
-		if err := cc.Get("rocketmq", &rmqConf); err != nil {
-			fmt.Printf("[rmqConfig] config key 'rocketmq' not found, using defaults: %v\n", err)
-			c.NameServer = "127.0.0.1:9876"
-		} else {
-			c.NameServer = rmqConf.NameServer
-		}
+	var rmqConf struct {
+		NameServer string `json:"name_server"`
 	}
+	svc := "async-handler"
+	if v, ok := inji.Find("serverName"); ok {
+		svc = v.(string)
+	}
+	if err := configclient.LoadFile(svc, "rocketmq.json", &rmqConf); err != nil {
+		return fmt.Errorf("[rmqConfig] load rocketmq config failed: %w", err)
+	}
+	c.NameServer = rmqConf.NameServer
 	fmt.Printf("[rmqConfig] initialized: nameServer=%s\n", c.NameServer)
 	return nil
 }

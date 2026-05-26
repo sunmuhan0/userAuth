@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 
+	"github.com/teou/inji"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -14,12 +16,11 @@ import (
 	"ttuser/auth-server/internal/model"
 	"ttuser/auth-server/internal/service"
 	"ttuser/auth-server/pkg/interceptor"
+	configclient "ttuser/config-client/client"
 )
 
 const (
-	defaultPort    = 9090
-	defaultCert    = "../certs/server.pem"     // TODO: 后续从配置中心获取
-	defaultCertKey = "../certs/server-key.pem" // TODO: 后续从配置中心获取
+	defaultPort = 9090
 )
 
 // AuthGRPCServer gRPC服务端实现
@@ -37,11 +38,23 @@ func (s *AuthGRPCServer) Run() error {
 		return fmt.Errorf("failed to listen: %w", err)
 	}
 
-	// 加载TLS证书
-	creds, err := credentials.NewServerTLSFromFile(defaultCert, defaultCertKey)
-	if err != nil {
-		return fmt.Errorf("failed to load TLS credentials: %w", err)
+	// 从配置中心加载TLS证书
+	svc := "auth-server"
+	if v, ok := inji.Find("serverName"); ok {
+		svc = v.(string)
 	}
+	var certsConf struct {
+		Cert string `json:"cert"`
+		Key  string `json:"key"`
+	}
+	if err := configclient.LoadFile(svc, "certs.json", &certsConf); err != nil {
+		return fmt.Errorf("failed to load certs config: %w", err)
+	}
+	certPair, err := tls.X509KeyPair([]byte(certsConf.Cert), []byte(certsConf.Key))
+	if err != nil {
+		return fmt.Errorf("failed to parse cert key pair: %w", err)
+	}
+	creds := credentials.NewServerTLSFromCert(&certPair)
 
 	s.server = grpc.NewServer(
 		grpc.Creds(creds),

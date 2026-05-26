@@ -8,6 +8,7 @@ INSTALL_DIR := /home/work/ttuser
 # 服务配置
 AUTH_SERVER_PORT := 9090
 PROC_PORT := 8080
+CONFIG_SERVER_PORT := 7963
 
 # ==================== 编译 ====================
 build: build-auth-server build-proc build-async-handler build-config-server
@@ -32,35 +33,38 @@ build-config-server:
 install: build
 	@echo "[install] installing ttuser services..."
 	@mkdir -p $(INSTALL_DIR)/bin
-	@mkdir -p $(INSTALL_DIR)/certs
 	@mkdir -p $(LOG_DIR)/auth-server_$(AUTH_SERVER_PORT)
 	@mkdir -p $(LOG_DIR)/proc_$(PROC_PORT)
 	@mkdir -p $(LOG_DIR)/async-handler_0
 	@cp $(BIN_DIR)/* $(INSTALL_DIR)/bin/
-	@cp -r certs/* $(INSTALL_DIR)/certs/ 2>/dev/null || true
 	@echo "[install] done. binaries at $(INSTALL_DIR)/bin/"
 	@echo "[install] logs at $(LOG_DIR)/"
 
 # ==================== 一键部署（启动所有服务） ====================
 deploy: install
 	@echo "[deploy] starting all services..."
+	@echo "[deploy] starting config-server on :$(CONFIG_SERVER_PORT)..."
+	@cd $(INSTALL_DIR) && nohup ./bin/config-server -name=config-server -port=$(CONFIG_SERVER_PORT) -env=prod > $(LOG_DIR)/config-server_$(CONFIG_SERVER_PORT)/stdout.log 2>&1 & echo $$! > /tmp/ttuser_config_server.pid
+	@sleep 2
 	@echo "[deploy] starting auth-server on :$(AUTH_SERVER_PORT)..."
-	@cd $(INSTALL_DIR) && nohup ./bin/auth-server > $(LOG_DIR)/auth-server_$(AUTH_SERVER_PORT)/stdout.log 2>&1 & echo $$! > /tmp/ttuser_auth_server.pid
+	@cd $(INSTALL_DIR) && nohup ./bin/auth-server -name=auth-server -port=$(AUTH_SERVER_PORT) -env=prod > $(LOG_DIR)/auth-server_$(AUTH_SERVER_PORT)/stdout.log 2>&1 & echo $$! > /tmp/ttuser_auth_server.pid
 	@sleep 2
 	@echo "[deploy] starting proc on :$(PROC_PORT)..."
-	@cd $(INSTALL_DIR) && nohup ./bin/proc > $(LOG_DIR)/proc_$(PROC_PORT)/stdout.log 2>&1 & echo $$! > /tmp/ttuser_proc.pid
+	@cd $(INSTALL_DIR) && nohup ./bin/proc -name=proc -port=$(PROC_PORT) -env=prod > $(LOG_DIR)/proc_$(PROC_PORT)/stdout.log 2>&1 & echo $$! > /tmp/ttuser_proc.pid
 	@sleep 1
 	@echo "[deploy] starting async-handler..."
-	@cd $(INSTALL_DIR) && nohup ./bin/async-handler > $(LOG_DIR)/async-handler_0/stdout.log 2>&1 & echo $$! > /tmp/ttuser_async_handler.pid
+	@cd $(INSTALL_DIR) && nohup ./bin/async-handler -name=async-handler -port=0 -env=prod > $(LOG_DIR)/async-handler_0/stdout.log 2>&1 & echo $$! > /tmp/ttuser_async_handler.pid
 	@sleep 1
 	@echo "[deploy] all services started."
-	@echo "  auth-server  PID=$$(cat /tmp/ttuser_auth_server.pid)"
-	@echo "  proc         PID=$$(cat /tmp/ttuser_proc.pid)"
+	@echo "  config-server PID=$$(cat /tmp/ttuser_config_server.pid)"
+	@echo "  auth-server   PID=$$(cat /tmp/ttuser_auth_server.pid)"
+	@echo "  proc          PID=$$(cat /tmp/ttuser_proc.pid)"
 	@echo "  async-handler PID=$$(cat /tmp/ttuser_async_handler.pid)"
 
 # ==================== 停止所有服务 ====================
 stop:
 	@echo "[stop] stopping all services..."
+	@kill $$(cat /tmp/ttuser_config_server.pid) 2>/dev/null && echo "  config-server stopped" || echo "  config-server not running"
 	@kill $$(cat /tmp/ttuser_auth_server.pid) 2>/dev/null && echo "  auth-server stopped" || echo "  auth-server not running"
 	@kill $$(cat /tmp/ttuser_proc.pid) 2>/dev/null && echo "  proc stopped" || echo "  proc not running"
 	@kill $$(cat /tmp/ttuser_async_handler.pid) 2>/dev/null && echo "  async-handler stopped" || echo "  async-handler not running"
@@ -70,6 +74,11 @@ stop:
 # ==================== 查看服务状态 ====================
 status:
 	@echo "[status] checking services..."
+	@if [ -f /tmp/ttuser_config_server.pid ] && kill -0 $$(cat /tmp/ttuser_config_server.pid) 2>/dev/null; then \
+		echo "  config-server  RUNNING (PID=$$(cat /tmp/ttuser_config_server.pid))"; \
+	else \
+		echo "  config-server  STOPPED"; \
+	fi
 	@if [ -f /tmp/ttuser_auth_server.pid ] && kill -0 $$(cat /tmp/ttuser_auth_server.pid) 2>/dev/null; then \
 		echo "  auth-server    RUNNING (PID=$$(cat /tmp/ttuser_auth_server.pid))"; \
 	else \
@@ -91,23 +100,31 @@ test: unit-test e2e-test
 
 unit-test:
 	@echo "[test] running unit tests..."
-	@cd auth-server && go test ./pkg/token/ ./internal/service/ -v -count=1
+	@cd auth-server && go test ./pkg/token/ ./internal/service/ ./internal/dao/ -v -count=1
+	@cd config-client && go test ./client/ -v -count=1
+
+	@cd event-producer && go test ./producer/ -v -count=1
+	@cd pkg && go test ./trace/ ./crypto/ ./metrics/ -v -count=1
 
 e2e-test: build
 	@echo "[e2e] preparing database..."
 	@mysql -u root -p123456 ttuser -e "TRUNCATE TABLE users; TRUNCATE TABLE token_blacklist;" 2>/dev/null || true
+	@echo "[e2e] starting config-server..."
+	@cd config-server && nohup ../$(BIN_DIR)/config-server -name=config-server -port=7963 -env=test > /dev/null 2>&1 & echo $$! > /tmp/e2e_config_server.pid
+	@sleep 1
 	@echo "[e2e] starting auth-server..."
-	@cd auth-server && ../$(BIN_DIR)/auth-server > /dev/null 2>&1 & echo $$! > /tmp/e2e_auth_server.pid
+	@cd auth-server && nohup ../$(BIN_DIR)/auth-server -name=auth-server -port=9090 -env=test > /dev/null 2>&1 & echo $$! > /tmp/e2e_auth_server.pid
 	@sleep 2
 	@echo "[e2e] starting proc..."
-	@cd proc && ../$(BIN_DIR)/proc > /dev/null 2>&1 & echo $$! > /tmp/e2e_proc.pid
+	@cd proc && nohup ../$(BIN_DIR)/proc -name=proc -port=8080 -env=test > /dev/null 2>&1 & echo $$! > /tmp/e2e_proc.pid
 	@sleep 2
 	@echo "[e2e] running e2e tests..."
 	@cd proc && go test ./e2e/ -v -count=1 -run "TestE2E" -timeout=30s; \
 		EXIT_CODE=$$?; \
+		kill $$(cat /tmp/e2e_config_server.pid) 2>/dev/null; \
 		kill $$(cat /tmp/e2e_proc.pid) 2>/dev/null; \
 		kill $$(cat /tmp/e2e_auth_server.pid) 2>/dev/null; \
-		rm -f /tmp/e2e_proc.pid /tmp/e2e_auth_server.pid; \
+		rm -f /tmp/e2e_config_server.pid /tmp/e2e_proc.pid /tmp/e2e_auth_server.pid; \
 		exit $$EXIT_CODE
 
 # ==================== 工具 ====================
