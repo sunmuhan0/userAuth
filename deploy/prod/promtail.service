@@ -1,0 +1,27 @@
+# Promtail systemd 服务文件
+# 安装步骤：
+# 1. 下载 promtail 二进制到 /usr/local/bin/promtail
+# 2. 将 promtail-config.yml 放到 /etc/promtail/config.yml
+# 3. 将此文件放到 /etc/systemd/system/promtail.service
+# 4. systemctl daemon-reload && systemctl enable promtail && systemctl start promtail
+
+[Unit]
+Description=Promtail Log Agent
+Documentation=https://grafana.com/docs/loki/latest/clients/promtail/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/promtail -config.file=/etc/promtail/config.yml
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+# 环境变量（用于配置中的${CLUSTER}等）
+Environment="CLUSTER=prod-cn-bj"
+Environment="HOSTNAME=%H"
+
+[Install]
+WantedBy=multi-user.target

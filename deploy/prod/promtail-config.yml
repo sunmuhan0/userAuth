@@ -1,0 +1,58 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  # 生产环境Loki地址（替换为实际地址）
+  - url: http://loki.internal:3100/loki/api/v1/push
+    # 如果Loki开启了认证（如Grafana Cloud）
+    # basic_auth:
+    #   username: <user_id>
+    #   password: <api_key>
+    batchwait: 1s
+    batchsize: 1048576  # 1MB
+
+scrape_configs:
+  - job_name: ttuser
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: ttuser
+          env: prod
+          cluster: "${CLUSTER:-default}"       # 通过环境变量注入集群名
+          instance: "${HOSTNAME}"              # 自动获取主机名
+          __path__: /var/log/work/**/*.log
+    pipeline_stages:
+      # 解析JSON日志
+      - json:
+          expressions:
+            level: level
+            trace_id: trace_id
+            msg: msg
+            data: data
+      - labels:
+          level:
+          msg:
+      # 解析data中的path和method
+      - json:
+          source: data
+          expressions:
+            path: path
+            method: method
+      - labels:
+          path:
+          method:
+      # 从文件路径提取服务名
+      - regex:
+          source: filename
+          expression: '/var/log/work/(?P<service>[^/]+)/'
+      - labels:
+          service:
+      # 丢弃debug级别日志（生产环境不采集debug）
+      - match:
+          selector: '{level="debug"}'
+          action: drop
