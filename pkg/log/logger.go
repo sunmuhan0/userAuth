@@ -15,6 +15,13 @@ var logger *zap.Logger
 var sugar *zap.SugaredLogger
 
 func init() {
+	// 默认初始化（仅stdout），如需Loki推送调用 InitWithLoki()
+	initLogger(nil)
+}
+
+// initLogger 初始化zap logger
+// 如果lokiWriter不为nil，日志同时输出到stdout和Loki
+func initLogger(lokiWriter zapcore.WriteSyncer) {
 	config := zapcore.EncoderConfig{
 		TimeKey:      "ts",
 		LevelKey:     "level",
@@ -25,14 +32,50 @@ func init() {
 		EncodeCaller: zapcore.ShortCallerEncoder,
 	}
 
-	core := zapcore.NewCore(
-		zapcore.NewJSONEncoder(config),
-		zapcore.AddSync(os.Stdout),
-		zapcore.InfoLevel,
-	)
+	encoder := zapcore.NewJSONEncoder(config)
+
+	var core zapcore.Core
+	if lokiWriter != nil {
+		// 同时输出到stdout和Loki
+		core = zapcore.NewCore(
+			encoder,
+			zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout), lokiWriter),
+			zapcore.InfoLevel,
+		)
+	} else {
+		core = zapcore.NewCore(
+			encoder,
+			zapcore.AddSync(os.Stdout),
+			zapcore.InfoLevel,
+		)
+	}
 
 	logger = zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
 	sugar = logger.Sugar()
+}
+
+// InitWithLoki 初始化日志并启用Loki推送
+// 在应用启动时调用：log.InitWithLoki(log.DefaultLokiConfig())
+func InitWithLoki(config *LokiConfig) {
+	InitLoki(config)
+	if config != nil && config.Enable {
+		initLogger(&lokiWriteSyncer{})
+	}
+}
+
+// lokiWriteSyncer 实现 zapcore.WriteSyncer，将日志推送到Loki
+type lokiWriteSyncer struct{}
+
+func (w *lokiWriteSyncer) Write(p []byte) (n int, err error) {
+	pushToLoki(string(p))
+	return len(p), nil
+}
+
+func (w *lokiWriteSyncer) Sync() error {
+	if loki != nil {
+		loki.flush()
+	}
+	return nil
 }
 
 // ==================== printf 风格（简单场景，推荐） ====================
@@ -114,4 +157,5 @@ func appendTraceKV(ctx context.Context, keysAndValues []interface{}) []interface
 // Sync 刷新日志缓冲（程序退出前调用）
 func Sync() {
 	_ = logger.Sync()
+	StopLoki()
 }
