@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 
+	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 	"github.com/teou/inji"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -12,6 +13,7 @@ import (
 
 	pb "ttuser/auth-client/auth"
 	configclient "ttuser/config-client/client"
+	"ttuser/pkg/nacos"
 	"ttuser/pkg/trace"
 )
 
@@ -57,14 +59,31 @@ func (c *AuthClient) init() error {
 		return fmt.Errorf("[AuthClient] load auth-client config failed: %w", err)
 	}
 
-	addr := authConf.Addr
-	if addr == "" {
-		addr = defaultAddr
-	}
-
 	cp := x509.NewCertPool()
 	cp.AppendCertsFromPEM([]byte(authConf.CACert))
 	creds := credentials.NewClientTLSFromCert(cp, "localhost")
+
+	// 优先通过 Nacos 发现 auth-server 地址
+	addr := authConf.Addr
+	var nacosCfg nacos.Config
+	if err := configclient.LoadFile(svc, "nacos.json", &nacosCfg); err == nil {
+		namingClient, err := nacos.NewNamingClient(&nacosCfg)
+		if err == nil {
+			instance, err := namingClient.SelectOneHealthyInstance(vo.SelectOneHealthInstanceParam{
+				ServiceName: "auth-server",
+				GroupName:   "DEFAULT_GROUP",
+				Clusters:    []string{"DEFAULT"},
+			})
+			if err == nil && instance != nil {
+				addr = fmt.Sprintf("%s:%d", instance.Ip, instance.Port)
+				fmt.Printf("[AuthClient] discovered auth-server via nacos: %s\n", addr)
+			}
+			namingClient.CloseClient()
+		}
+	}
+	if addr == "" {
+		addr = defaultAddr
+	}
 
 	conn, err := grpc.Dial(addr,
 		grpc.WithTransportCredentials(creds),

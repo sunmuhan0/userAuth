@@ -13,6 +13,7 @@ import (
 	"ttuser/auth-server/sp"
 	configclient "ttuser/config-client/client"
 	"ttuser/pkg/log"
+	pnacos "ttuser/pkg/nacos"
 )
 
 func main() {
@@ -46,6 +47,20 @@ func main() {
 	// ========== 注册ServiceProvider ==========
 	inji.Reg("serviceProvider", (*sp.ServiceProvider)(nil))
 	sp.Init()
+
+	// ========== 初始化 Nacos ==========
+	var nacosCfg pnacos.Config
+	if err := configclient.LoadFile(*name, "nacos.json", &nacosCfg); err != nil {
+		fmt.Printf("[auth-server] load nacos config failed (nacos disabled): %v\n", err)
+	} else {
+		namingClient, err := pnacos.NewNamingClient(&nacosCfg)
+		if err != nil {
+			fmt.Printf("[auth-server] init nacos client failed: %v\n", err)
+			os.Exit(1)
+		}
+		sp.Get().GRPCServer.SetNamingClient(namingClient)
+		fmt.Println("[auth-server] nacos naming client initialized")
+	}
 
 	// ========== 启动gRPC服务 ==========
 	go func() {

@@ -59,7 +59,8 @@ ttuser/
 │   ├── trace/                # 全链路 trace_id
 │   ├── log/                  # zap 日志封装（日志轮转）
 │   ├── crypto/               # AES-256-GCM 加解密
-│   └── metrics/              # Prometheus 指标
+│   ├── metrics/              # Prometheus 指标
+│   └── nacos/                # Nacos 服务注册发现封装
 │
 ├── proc/                     # HTTP 网关（Gin）
 │   ├── cmd/server/main.go    # 入口（CLI 参数 -name -port -env）
@@ -92,6 +93,35 @@ ttuser/
 | 认证方案 | JWT（access 2h + refresh 7d） |
 | 监控 | Prometheus |
 | 配置/密码加密 | AES-256-GCM / bcrypt |
+| 服务注册发现 | Nacos（nacos-sdk-go/v2） |
+
+## 服务注册发现（Nacos）
+
+### 架构
+
+```
+auth-server (gRPC)
+  ├── 启动时 → Nacos.RegisterInstance("auth-server", ip, port)
+  ├── 运行中 → SDK 自动发送心跳（5s）
+  └── 关闭时 → Nacos.DeregisterInstance("auth-server")
+
+auth-client (proc 内)
+  ├── 启动时 → Nacos.SelectOneHealthyInstance("auth-server")
+  ├── 成功   → 使用 Nacos 返回的 ip:port 建立 gRPC 连接
+  └── 失败   → 降级到 auth-client.json 中的静态 addr
+```
+
+- **注册**：`auth-server` 启动时以临时实例（ephemeral）注册到 Nacos，权重 10
+- **发现**：`auth-client` 优先通过 `SelectOneHealthyInstance` 获取服务端地址，Nacos 不可用时降级到配置中心中的静态地址
+- **心跳**：Nacos SDK 内置 5s 心跳，实例宕机自动摘除
+- **配置**：Nacos 服务器地址存储在 `nacos.json` 中，走现有配置中心流程
+
+### 支持的配置文件
+
+| 服务 | 文件名 | 内容 |
+|------|--------|------|
+| auth-server | nacos.json | server_addr, server_port, namespace_id |
+| proc | nacos.json | server_addr, server_port, namespace_id |
 
 ## 配置中心
 
@@ -115,6 +145,7 @@ CLI 参数 -name -port -env
      → log.Init(nil)
        → FetchConfigs() 下载到 /home/work/config/{serviceName}/
          → sp.Init()（各组件从本地文件读取配置）
+           → Nacos 注册（auth-server）/ 发现（auth-client）
 ```
 
 - 配置获取失败直接报错，**无降级默认值**
@@ -128,7 +159,9 @@ CLI 参数 -name -port -env
 | auth-server | mysql.json | DSN |
 | auth-server | jwt.json | secret, access_expire, refresh_expire |
 | auth-server | certs.json | cert, key（PEM） |
+| auth-server | nacos.json | Nacos 服务器地址（server_addr, server_port） |
 | proc | auth-client.json | addr, ca_cert |
+| proc | nacos.json | Nacos 服务器地址（同上，供 auth-client 发现用） |
 | event-producer | rocketmq.json | name_server, group_name |
 | async-handler | rocketmq.json | name_server, group_name |
 | async-handler | sms.json | api_key, api_secret, sign_name, template |
@@ -154,7 +187,7 @@ CLI 参数 -name -port -env
 
 ### 1. 环境准备
 
-Go 1.18+, MySQL 8.0+, RocketMQ 4.x+, OpenSSL
+Go 1.21+, MySQL 8.0+, RocketMQ 4.x+, OpenSSL, Nacos 2.x
 
 ### 2. 初始化数据库
 
