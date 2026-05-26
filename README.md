@@ -1,6 +1,6 @@
 # 用户认证服务
 
-基于 Go + gRPC + MySQL + RocketMQ + inji(DI) 的微服务架构鉴权系统。
+基于 Go + gRPC + MySQL + RocketMQ + inji(DI) + 配置中心 的微服务架构鉴权系统。
 
 ## 项目结构
 
@@ -36,6 +36,23 @@ ttuser/
 │   │   └── sms/              # Sender + Config（短信发送，当前模拟）
 │   └── sp/                   # ServiceProvider（注册handler到server）
 │
+├── config-server/            # 配置中心服务（MySQL存储 + HTTP API + AES加密）
+│   ├── cmd/server/main.go
+│   ├── internal/
+│   │   ├── dao/              # MySQL CRUD
+│   │   ├── model/            # Config模型（service/key/value/encrypted/version）
+│   │   └── service/          # 配置管理（Get/Set/SetEncrypted）
+│   ├── server/               # HTTP API (Gin, :7963)
+│   └── sp/
+│
+├── config-client/            # 配置中心客户端SDK
+│   └── client/client.go      # HTTP客户端（启动拉取 + 定时刷新 + 自动解密）
+│
+├── pkg/                      # 公共库（所有服务共享）
+│   ├── trace/                # 全链路trace_id（生成/context存取/常量）
+│   ├── log/                  # zap日志封装（自动带trace_id, 支持Loki推送）
+│   └── crypto/               # AES-256-GCM加解密（密钥从环境变量获取）
+│
 ├── proc/                     # HTTP 网关（Gin）
 │   ├── cmd/server/main.go    # 入口
 │   ├── filter/               # 鉴权过滤器（按路由分组）
@@ -63,10 +80,62 @@ ttuser/
 | HTTP 网关 | Gin |
 | 服务间通信 | gRPC + Protobuf |
 | 消息队列 | Apache RocketMQ |
+| 配置中心 | config-server（MySQL + HTTP API + AES-256-GCM加密） |
+| 链路追踪 | 全链路 trace_id（32-hex, HTTP→gRPC→MQ→Consumer） |
+| 日志框架 | zap（JSON结构化, 支持Loki推送） |
 | 依赖注入 | github.com/teou/inji |
 | 认证方案 | JWT（access_token 2h + refresh_token 7d，轮转续签） |
 | 数据存储 | MySQL |
 | 密码加密 | bcrypt |
+| 配置加密 | AES-256-GCM（密钥通过环境变量注入） |
+| 日志管理 | Grafana Loki + Promtail |
+
+## 配置中心
+
+### 架构
+
+```
+config-server (MySQL存储, HTTP :7963)
+      ↑ 管理员写入配置（敏感配置加密存储）
+      ↓ 各服务启动时拉取
+┌─────────────┬──────────────┬───────────────┐
+│ auth-server │ async-handler│ event-producer│
+│ (config-client SDK)                        │
+└─────────────┴──────────────┴───────────────┘
+```
+
+### API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/config?service=xxx&key=xxx` | 获取单个配置 |
+| GET | `/configs?service=xxx` | 获取服务所有配置 |
+| POST | `/config` | 写入配置（明文） |
+| POST | `/config/encrypted` | 写入配置（加密存储） |
+
+认证：`Authorization: Bearer ttuser-config-token-2024`
+
+### 敏感配置加密
+
+```bash
+# 设置加密密钥（生产环境由运维注入，不进代码）
+export CONFIG_ENCRYPT_KEY="your-32-byte-production-key!!!!"
+
+# 写入敏感配置（自动加密存储）
+curl -X POST http://localhost:7963/config/encrypted \
+  -H "Authorization: Bearer ttuser-config-token-2024" \
+  -H "Content-Type: application/json" \
+  -d '{"service":"auth-server","key":"mysql","value":"{\"dsn\":\"root:123456@tcp(localhost:3306)/ttuser\"}"}'
+```
+
+客户端获取时根据 `encrypted` 字段自动解密，对业务透明。
+
+### 配置降级
+
+各服务获取配置的策略：
+1. 优先从配置中心获取
+2. 配置中心不可用时，降级使用代码中的默认值
+3. 保证服务可独立启动（不强依赖配置中心）
 
 ## 消息队列架构
 
