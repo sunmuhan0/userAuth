@@ -11,6 +11,7 @@ import (
 	"ttuser/auth-server/internal/model"
 	"ttuser/auth-server/pkg/token"
 	"ttuser/event-producer/producer"
+	"ttuser/pkg/log"
 )
 
 var (
@@ -44,7 +45,10 @@ func (s *AuthServiceImpl) Register(ctx context.Context, username, password, nick
 		return nil, ErrPasswordTooLong
 	}
 
-	// bcrypt 加密密码
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
@@ -68,8 +72,7 @@ func (s *AuthServiceImpl) Register(ctx context.Context, username, password, nick
 			Nickname: record.Nickname,
 		}
 		if err := s.EventPublisher.Publish(ctx, TopicUser, TagUserRegistered, payload); err != nil {
-			// 发送MQ失败不影响注册主流程，仅记录日志
-			fmt.Printf("[auth-service] failed to publish user registered event: %v\n", err)
+			log.Warn(ctx, "failed to publish user registered event", "error", err)
 		}
 	}
 
@@ -81,6 +84,10 @@ func (s *AuthServiceImpl) Login(ctx context.Context, username, password string) 
 	record, err := s.UserDAO.GetByUsername(ctx, username)
 	if err != nil {
 		return "", "", 0, nil, ErrInvalidCredentials
+	}
+
+	if err := ctx.Err(); err != nil {
+		return "", "", 0, nil, err
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(record.Password), []byte(password)); err != nil {
@@ -104,7 +111,9 @@ func (s *AuthServiceImpl) Login(ctx context.Context, username, password string) 
 func (s *AuthServiceImpl) Logout(ctx context.Context, accessToken, refreshToken string) error {
 	if accessToken != "" {
 		claims, err := s.TokenMgr.Parse(accessToken)
-		if err == nil {
+		if err != nil {
+			log.Warn(ctx, "failed to parse access token during logout", "error", err)
+		} else {
 			if err := s.TokenDAO.Add(ctx, accessToken, claims.ExpiresAt.Unix()); err != nil {
 				return fmt.Errorf("failed to blacklist access token: %w", err)
 			}
@@ -112,7 +121,9 @@ func (s *AuthServiceImpl) Logout(ctx context.Context, accessToken, refreshToken 
 	}
 	if refreshToken != "" {
 		claims, err := s.TokenMgr.ParseRefresh(refreshToken)
-		if err == nil {
+		if err != nil {
+			log.Warn(ctx, "failed to parse refresh token during logout", "error", err)
+		} else {
 			if err := s.TokenDAO.Add(ctx, refreshToken, claims.ExpiresAt.Unix()); err != nil {
 				return fmt.Errorf("failed to blacklist refresh token: %w", err)
 			}
@@ -157,6 +168,10 @@ func (s *AuthServiceImpl) ValidateToken(ctx context.Context, tokenStr string) (*
 
 // RefreshToken 续签token
 func (s *AuthServiceImpl) RefreshToken(ctx context.Context, refreshTokenStr string) (string, string, int64, error) {
+	if err := ctx.Err(); err != nil {
+		return "", "", 0, err
+	}
+
 	blacklisted, err := s.TokenDAO.Exists(ctx, refreshTokenStr)
 	if err != nil {
 		return "", "", 0, err

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -23,9 +24,20 @@ func NewConfigService(configDir string) *ConfigService {
 	return &ConfigService{ConfigDir: configDir}
 }
 
+func isValidPathComponent(s string) bool {
+	return s != "" && !strings.Contains(s, "..") && !strings.Contains(s, "/") && !strings.Contains(s, "\\")
+}
+
 // ListFiles 获取合并后的配置文件列表
 // 先加载 base/{service}/，再加载 {env}/{service}/，同名文件 env 覆盖 base
 func (s *ConfigService) ListFiles(env, service string) ([]ConfigFile, error) {
+	if !isValidPathComponent(env) {
+		return nil, fmt.Errorf("invalid env: %q", env)
+	}
+	if !isValidPathComponent(service) {
+		return nil, fmt.Errorf("invalid service: %q", service)
+	}
+
 	files := make(map[string]string)
 
 	// 1. 加载 base/{service}/
@@ -60,9 +72,15 @@ func (s *ConfigService) ListFiles(env, service string) ([]ConfigFile, error) {
 		return nil, fmt.Errorf("no config files found for env=%s, service=%s", env, service)
 	}
 
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
 	result := make([]ConfigFile, 0, len(files))
-	for name, content := range files {
-		result = append(result, ConfigFile{Name: name, Content: content})
+	for _, name := range names {
+		result = append(result, ConfigFile{Name: name, Content: files[name]})
 	}
 	return result, nil
 }

@@ -4,13 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+)
+
+var (
+	structFieldCache sync.Map
 )
 
 // BaseMysqlClient 通用MySQL客户端实现
@@ -55,6 +61,7 @@ func getEnvInt(key string, defaultVal int) int {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
 		}
+		log.Printf("[mysql] invalid env %s=%q, using default %d", key, v, defaultVal)
 	}
 	return defaultVal
 }
@@ -186,10 +193,15 @@ func (c *BaseMysqlClient) ExecTransaction(transactionExec TransactionExec) (int6
 	}
 	rowsAffected, err := transactionExec(tx)
 	if err != nil {
-		tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return 0, fmt.Errorf("transaction error: %w, rollback error: %v", err, rbErr)
+		}
 		return 0, err
 	}
-	return rowsAffected, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit error: %w", err)
+	}
+	return rowsAffected, nil
 }
 
 // InsertOrUpdateOnDup 插入，遇到唯一键冲突时更新指定字段
@@ -297,6 +309,29 @@ func (c *BaseMysqlClient) structToColumnsValues(d interface{}, ignoreFields []st
 	return columns, values
 }
 
+func getStructFieldMap(t reflect.Type) map[string]int {
+	typeKey := t.PkgPath() + "." + t.Name()
+	if cached, ok := structFieldCache.Load(typeKey); ok {
+		return cached.(map[string]int)
+	}
+
+	fieldMap := make(map[string]int)
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		dbTag := field.Tag.Get("db")
+		if dbTag == "" || dbTag == "-" {
+			continue
+		}
+		fieldMap[dbTag] = i
+	}
+
+	structFieldCache.Store(typeKey, fieldMap)
+	return fieldMap
+}
+
 // scanRows 将结果映射到struct列表
 func (c *BaseMysqlClient) scanRows(rows *sql.Rows, dataType interface{}) ([]interface{}, error) {
 	columns, err := rows.Columns()
@@ -309,15 +344,7 @@ func (c *BaseMysqlClient) scanRows(rows *sql.Rows, dataType interface{}) ([]inte
 		t = t.Elem()
 	}
 
-	fieldMap := make(map[string]int)
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		dbTag := field.Tag.Get("db")
-		if dbTag == "" {
-			dbTag = strings.ToLower(field.Name)
-		}
-		fieldMap[dbTag] = i
-	}
+	fieldMap := getStructFieldMap(t)
 
 	result := make([]interface{}, 0)
 

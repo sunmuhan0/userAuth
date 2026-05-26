@@ -27,10 +27,17 @@ func Init() {
 		panic("[sms-consumer] serviceProvider not found in inji container")
 	}
 	once.Do(func() {
-		instance = obj.(*ServiceProvider)
+		var ok bool
+		instance, ok = obj.(*ServiceProvider)
+		if !ok {
+			panic("[sms-consumer] serviceProvider is not *ServiceProvider type")
+		}
 	})
 }
 
 func Get() *ServiceProvider {
+	if instance == nil {
+		panic("[sms-consumer] ServiceProvider not initialized: call Init() first")
+	}
 	return instance
 }

@@ -21,13 +21,18 @@ type ProcMysqlClient struct {
 func (c *ProcMysqlClient) Start() error {
 	svc := "auth-server"
 	if v, ok := inji.Find("serverName"); ok {
-		svc = v.(string)
+		if name, ok := v.(string); ok {
+			svc = name
+		}
 	}
 	var mysqlConf struct {
 		DSN string `json:"dsn"`
 	}
 	if err := configclient.LoadFile(svc, "mysql.json", &mysqlConf); err != nil {
 		return fmt.Errorf("[ProcMysqlClient] load mysql config failed: %w", err)
+	}
+	if mysqlConf.DSN == "" {
+		return fmt.Errorf("[ProcMysqlClient] mysql DSN is empty for service %s", svc)
 	}
 	if err := c.Connect(mysqlConf.DSN); err != nil {
 		return fmt.Errorf("[ProcMysqlClient] connect failed: %w", err)

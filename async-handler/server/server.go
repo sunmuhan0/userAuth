@@ -127,7 +127,9 @@ func (s *ConsumerServer) startGroup(group *router.TopicGroup) error {
 // Close 实现 inji.Closeable 接口
 func (s *ConsumerServer) Close() {
 	for _, c := range s.consumers {
-		c.Shutdown()
+		if err := c.Shutdown(); err != nil {
+			log.Printf("[async-handler] consumer shutdown error: %v", err)
+		}
 	}
 	fmt.Println("[async-handler] shutdown")
 }

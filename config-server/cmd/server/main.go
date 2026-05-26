@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	stdlog "log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -43,10 +42,20 @@ func main() {
 
 	// ========== 初始化日志 ==========
 	log.Init(nil)
-	defer log.Sync()
+	defer func() {
+		if err := log.Sync(); err != nil {
+			fmt.Printf("[config-server] log sync error: %v\n", err)
+		}
+	}()
+
+	svc := sp.Get()
+	if svc == nil || svc.HTTPServer == nil {
+		fmt.Println("[config-server] failed to initialize HTTP server")
+		os.Exit(1)
+	}
 
 	// ========== 启动HTTP服务 ==========
-	httpServer := sp.Get().HTTPServer
+	httpServer := svc.HTTPServer
 	httpServer.Start()
 
 	fmt.Println("[config-server] started")
@@ -61,13 +70,15 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		stdlog.Printf("[config-server] server shutdown error: %v", err)
+		fmt.Printf("[config-server] server shutdown error: %v\n", err)
 	} else {
 		fmt.Println("[config-server] HTTP server stopped gracefully")
 	}
 
 	// 关闭依赖注入容器
-	inji.Close()
+	if err := inji.Close(); err != nil {
+		fmt.Printf("[config-server] inji close error: %v\n", err)
+	}
 
 	fmt.Println("[config-server] stopped")
 }

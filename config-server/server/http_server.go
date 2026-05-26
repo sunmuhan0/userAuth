@@ -4,16 +4,18 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/teou/inji"
 
 	"ttuser/config-server/internal/service"
+	"ttuser/pkg/log"
 )
 
 const (
-	defaultPort  = 7963
-	defaultToken = "ttuser-config-token-2024"
+	defaultPort = 7963
 )
 
 // HTTPServer 配置中心HTTP服务
@@ -23,20 +25,38 @@ type HTTPServer struct {
 	httpServer    *http.Server
 }
 
+func getConfigToken() string {
+	token := os.Getenv("CONFIG_SERVER_TOKEN")
+	if token == "" {
+		token = "ttuser-config-token-2024"
+	}
+	return token
+}
+
 // Start 实现 inji.Startable
 func (s *HTTPServer) Start() error {
-	s.engine = gin.Default()
+	s.engine = gin.New()
+	s.engine.Use(gin.Recovery())
 	s.setupRoutes()
 
+	port := defaultPort
+	if v, ok := inji.Find("serverPort"); ok {
+		if vStr, ok := v.(string); ok {
+			if p, err := fmt.Sscanf(vStr, "%d", &port); err != nil || p != 1 {
+				port = defaultPort
+			}
+		}
+	}
+
 	s.httpServer = &http.Server{
-		Addr:         fmt.Sprintf(":%d", defaultPort),
+		Addr:         fmt.Sprintf(":%d", port),
 		Handler:      s.engine,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
-	fmt.Printf("[config-server] listening on :%d\n", defaultPort)
+	fmt.Printf("[config-server] listening on :%d\n", port)
 	go func() {
 		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			fmt.Printf("[config-server] listen error: %v\n", err)
@@ -62,9 +82,10 @@ func (s *HTTPServer) setupRoutes() {
 
 // authMiddleware 静态token认证
 func (s *HTTPServer) authMiddleware() gin.HandlerFunc {
+	token := getConfigToken()
 	return func(c *gin.Context) {
-		token := c.GetHeader("Authorization")
-		if token != "Bearer "+defaultToken {
+		auth := c.GetHeader("Authorization")
+		if auth != "Bearer "+token {
 			c.JSON(http.StatusUnauthorized, gin.H{"code": 401, "message": "unauthorized"})
 			c.Abort()
 			return
@@ -84,7 +105,8 @@ func (s *HTTPServer) listFiles(c *gin.Context) {
 
 	files, err := s.ConfigService.ListFiles(env, svc)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		log.Error(c.Request.Context(), "list config files failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "failed to list config files"})
 		return
 	}
 

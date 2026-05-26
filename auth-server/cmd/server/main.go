@@ -31,7 +31,11 @@ func main() {
 
 	// ========== 初始化日志 ==========
 	log.Init(nil)
-	defer log.Sync()
+	defer func() {
+		if err := log.Sync(); err != nil {
+			fmt.Printf("[auth-server] log sync error: %v\n", err)
+		}
+	}()
 
 	// ========== 从配置中心拉取配置文件 ==========
 	cc := configclient.New(&configclient.Config{
@@ -47,13 +51,25 @@ func main() {
 	inji.Reg("serviceProvider", (*sp.ServiceProvider)(nil))
 	sp.Init()
 
-	// ========== 启动gRPC服务 ==========
+	svc := sp.Get()
+	if svc == nil || svc.GRPCServer == nil {
+		fmt.Println("[auth-server] failed to initialize gRPC server")
+		os.Exit(1)
+	}
+
+	errCh := make(chan error, 1)
 	go func() {
-		if err := sp.Get().GRPCServer.Run(); err != nil {
-			fmt.Printf("[auth-server] failed to start: %v\n", err)
-			os.Exit(1)
+		if err := svc.GRPCServer.Run(); err != nil {
+			errCh <- err
 		}
 	}()
+
+	select {
+	case err := <-errCh:
+		fmt.Printf("[auth-server] failed to start: %v\n", err)
+		os.Exit(1)
+	default:
+	}
 
 	// ========== 等待信号 ==========
 	quit := make(chan os.Signal, 1)
@@ -63,20 +79,24 @@ func main() {
 	fmt.Printf("\n[auth-server] received signal %v, shutting down...\n", sig)
 
 	// 1. 优雅停止gRPC服务
-	stopDone := make(chan struct{})
-	go func() {
-		sp.Get().GRPCServer.Stop()
-		close(stopDone)
-	}()
-	select {
-	case <-stopDone:
-		fmt.Println("[auth-server] gRPC server stopped gracefully")
-	case <-time.After(10 * time.Second):
-		fmt.Println("[auth-server] gRPC server stop timeout, force shutdown")
+	if svc.GRPCServer != nil {
+		stopDone := make(chan struct{})
+		go func() {
+			svc.GRPCServer.Stop()
+			close(stopDone)
+		}()
+		select {
+		case <-stopDone:
+			fmt.Println("[auth-server] gRPC server stopped gracefully")
+		case <-time.After(10 * time.Second):
+			fmt.Println("[auth-server] gRPC server stop timeout, force shutdown")
+		}
 	}
 
 	// 2. 关闭依赖注入容器
-	inji.Close()
+	if err := inji.Close(); err != nil {
+		fmt.Printf("[auth-server] inji close error: %v\n", err)
+	}
 
 	fmt.Println("[auth-server] stopped")
 }

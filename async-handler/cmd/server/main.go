@@ -17,7 +17,6 @@ import (
 
 func main() {
 	name := flag.String("name", "async-handler", "service name")
-	port := flag.Int("port", 0, "service port")
 	env := flag.String("env", "prod", "deploy environment: prod/staging/preview")
 	flag.Parse()
 
@@ -28,12 +27,15 @@ func main() {
 
 	// ========== 注册服务标识与运行环境 ==========
 	inji.Reg("serverName", *name)
-	inji.Reg("serverPort", fmt.Sprintf("%d", *port))
 	inji.Reg("env", *env)
 
 	// ========== 初始化日志 ==========
 	log.Init(nil)
-	defer log.Sync()
+	defer func() {
+		if err := log.Sync(); err != nil {
+			fmt.Printf("[sms-consumer] log sync error: %v\n", err)
+		}
+	}()
 
 	// ========== 从配置中心拉取配置文件 ==========
 	cc := configclient.New(&configclient.Config{
@@ -42,6 +44,7 @@ func main() {
 	})
 	if err := cc.FetchConfigs(); err != nil {
 		fmt.Printf("[sms-consumer] fetch configs failed: %v\n", err)
+		log.Sync()
 		os.Exit(1)
 	}
 
@@ -60,7 +63,9 @@ func main() {
 
 	closeDone := make(chan struct{})
 	go func() {
-		inji.Close()
+		if err := inji.Close(); err != nil {
+			fmt.Printf("[sms-consumer] inji close error: %v\n", err)
+		}
 		close(closeDone)
 	}()
 	select {

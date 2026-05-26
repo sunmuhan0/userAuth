@@ -5,11 +5,14 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"strconv"
+	"time"
 
 	"github.com/teou/inji"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
 	pb "ttuser/auth-client/auth"
@@ -18,6 +21,7 @@ import (
 	"ttuser/auth-server/pkg/interceptor"
 	configclient "ttuser/config-client/client"
 	pnacos "ttuser/pkg/nacos"
+	"ttuser/pkg/log"
 )
 
 const (
@@ -41,8 +45,11 @@ func (s *AuthGRPCServer) SetRegistrar(r pnacos.IServiceRegistrar) {
 func (s *AuthGRPCServer) Run() error {
 	port := defaultPort
 	if v, ok := inji.Find("serverPort"); ok {
-		if p, err := fmt.Sscanf(fmt.Sprintf("%v", v), "%d", &port); err != nil || p != 1 {
-			port = defaultPort
+		vStr, ok := v.(string)
+		if ok {
+			if p, err := strconv.Atoi(vStr); err == nil {
+				port = p
+			}
 		}
 	}
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
@@ -53,7 +60,9 @@ func (s *AuthGRPCServer) Run() error {
 	// 从配置中心加载TLS证书
 	svc := "auth-server"
 	if v, ok := inji.Find("serverName"); ok {
-		svc = v.(string)
+		if name, ok := v.(string); ok {
+			svc = name
+		}
 	}
 	var certsConf struct {
 		Cert string `json:"cert"`
@@ -71,8 +80,26 @@ func (s *AuthGRPCServer) Run() error {
 	s.server = grpc.NewServer(
 		grpc.Creds(creds),
 		grpc.UnaryInterceptor(interceptor.UnaryServerTraceInterceptor()),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionIdle:     15 * time.Minute,
+			MaxConnectionAge:      30 * time.Minute,
+			MaxConnectionAgeGrace: 5 * time.Minute,
+			Time:    10 * time.Second,
+			Timeout: 5 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
+		grpc.MaxRecvMsgSize(4 * 1024 * 1024),
 	)
 	pb.RegisterAuthServiceServer(s.server, s)
+
+	if s.registrar != nil {
+		if err := s.registrar.Register(svc, port); err != nil {
+			fmt.Printf("[auth-server] failed to register service: %v\n", err)
+		}
+	}
 
 	fmt.Printf("[auth-server] gRPC listening on :%d (TLS)\n", port)
 	return s.server.Serve(lis)
@@ -83,31 +110,44 @@ func (s *AuthGRPCServer) Stop() {
 	if s.server != nil {
 		s.server.GracefulStop()
 	}
+	if s.registrar != nil {
+		if err := s.registrar.Deregister(); err != nil {
+			fmt.Printf("[auth-server] failed to deregister service: %v\n", err)
+		}
+	}
 }
 
 // Register 注册RPC
 func (s *AuthGRPCServer) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+	if s.AuthService == nil {
+		return nil, status.Error(codes.Internal, "auth service not initialized")
+	}
 	if req.Username == "" || req.Password == "" {
 		return nil, status.Error(codes.InvalidArgument, "username and password are required")
 	}
 	user, err := s.AuthService.Register(ctx, req.Username, req.Password, req.Nickname, req.Email)
 	if err != nil {
 		if err == service.ErrUserAlreadyExists {
-			return nil, status.Error(codes.AlreadyExists, err.Error())
+			return nil, status.Error(codes.AlreadyExists, "username already exists")
 		}
-		return nil, status.Error(codes.Internal, err.Error())
+		log.Error(ctx, "register failed", "error", err)
+		return nil, status.Error(codes.Internal, "internal error")
 	}
 	return &pb.RegisterResponse{User: userToProto(user)}, nil
 }
 
 // Login 登录RPC
 func (s *AuthGRPCServer) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResponse, error) {
+	if s.AuthService == nil {
+		return nil, status.Error(codes.Internal, "auth service not initialized")
+	}
 	if req.Username == "" || req.Password == "" {
 		return nil, status.Error(codes.InvalidArgument, "username and password are required")
 	}
 	accessToken, refreshToken, expiresAt, user, err := s.AuthService.Login(ctx, req.Username, req.Password)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, err.Error())
+		log.Warn(ctx, "login failed", "error", err)
+		return nil, status.Error(codes.Unauthenticated, "invalid username or password")
 	}
 	return &pb.LoginResponse{
 		Token:        accessToken,
@@ -119,33 +159,44 @@ func (s *AuthGRPCServer) Login(ctx context.Context, req *pb.LoginRequest) (*pb.L
 
 // Logout 注销RPC
 func (s *AuthGRPCServer) Logout(ctx context.Context, req *pb.LogoutRequest) (*pb.LogoutResponse, error) {
+	if s.AuthService == nil {
+		return nil, status.Error(codes.Internal, "auth service not initialized")
+	}
 	err := s.AuthService.Logout(ctx, req.Token, req.RefreshToken)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.Error(ctx, "logout failed", "error", err)
+		return nil, status.Error(codes.Internal, "logout failed")
 	}
 	return &pb.LogoutResponse{Success: true}, nil
 }
 
 // GetUserInfo 获取用户信息RPC
 func (s *AuthGRPCServer) GetUserInfo(ctx context.Context, req *pb.GetUserInfoRequest) (*pb.GetUserInfoResponse, error) {
+	if s.AuthService == nil {
+		return nil, status.Error(codes.Internal, "auth service not initialized")
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
 	user, err := s.AuthService.GetUserInfo(ctx, req.UserId)
 	if err != nil {
-		return nil, status.Error(codes.NotFound, err.Error())
+		return nil, status.Error(codes.NotFound, "user not found")
 	}
 	return &pb.GetUserInfoResponse{User: userToProto(user)}, nil
 }
 
 // UpdateUserInfo 更新用户信息RPC
 func (s *AuthGRPCServer) UpdateUserInfo(ctx context.Context, req *pb.UpdateUserInfoRequest) (*pb.UpdateUserInfoResponse, error) {
+	if s.AuthService == nil {
+		return nil, status.Error(codes.Internal, "auth service not initialized")
+	}
 	if req.UserId == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
 	user, err := s.AuthService.UpdateUserInfo(ctx, req.UserId, req.Nickname, req.Email, req.Avatar)
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		log.Error(ctx, "update user info failed", "error", err)
+		return nil, status.Error(codes.Internal, "update failed")
 	}
 	return &pb.UpdateUserInfoResponse{User: userToProto(user)}, nil
 }

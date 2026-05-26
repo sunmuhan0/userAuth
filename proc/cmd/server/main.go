@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	stdlog "log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,7 +34,11 @@ func main() {
 
 	// ========== 初始化日志 ==========
 	log.Init(nil)
-	defer log.Sync()
+	defer func() {
+		if err := log.Sync(); err != nil {
+			fmt.Printf("[proc] log sync error: %v\n", err)
+		}
+	}()
 
 	// ========== 从配置中心拉取配置文件 ==========
 	cc := configclient.New(&configclient.Config{
@@ -57,16 +60,28 @@ func main() {
 
 	// ========== 启动HTTP服务 ==========
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", *port),
-		Handler: engine,
+		Addr:              fmt.Sprintf(":%d", *port),
+		Handler:           engine,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	errCh := make(chan error, 1)
 	go func() {
 		fmt.Printf("[proc] HTTP gateway listening on :%d\n", *port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			stdlog.Fatalf("[proc] failed to start: %v", err)
+			errCh <- err
 		}
 	}()
+
+	select {
+	case err := <-errCh:
+		fmt.Printf("[proc] failed to start: %v\n", err)
+		os.Exit(1)
+	default:
+	}
 
 	// ========== 优雅关闭 ==========
 	quit := make(chan os.Signal, 1)
@@ -78,13 +93,15 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		stdlog.Printf("[proc] server shutdown error: %v", err)
+		fmt.Printf("[proc] server shutdown error: %v\n", err)
 	} else {
 		fmt.Println("[proc] HTTP server stopped gracefully")
 	}
 
 	// 关闭依赖注入容器
-	inji.Close()
+	if err := inji.Close(); err != nil {
+		fmt.Printf("[proc] inji close error: %v\n", err)
+	}
 
 	fmt.Println("[proc] stopped")
 }

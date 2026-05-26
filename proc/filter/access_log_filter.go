@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -22,10 +23,14 @@ func AccessLogFilter() gin.HandlerFunc {
 
 		// 读取请求body（需要缓存，Body只能读一次）
 		var reqBody string
-		if c.Request.Body != nil {
-			bodyBytes, _ := io.ReadAll(c.Request.Body)
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-			reqBody = truncate(string(bodyBytes))
+		if c.Request.Body != nil && c.Request.ContentLength > 0 {
+			bodyBytes, err := io.ReadAll(c.Request.Body)
+			if err != nil {
+				log.Warn(c.Request.Context(), "failed to read request body", "error", err)
+			} else {
+				c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+				reqBody = truncate(string(bodyBytes))
+			}
 		}
 
 		// 包装ResponseWriter以拦截响应体
@@ -144,10 +149,15 @@ func sanitizeBody(body string) string {
 	return string(b)
 }
 
-// truncate 截断超过4KB的字符串
+// truncate 截断超过4KB的字符串（按rune安全截断）
 func truncate(s string) string {
 	if len(s) > maxBodySize {
-		return s[:maxBodySize] + "...(truncated)"
+		b := []byte(s)
+		b = b[:maxBodySize]
+		for !utf8.Valid(b) {
+			b = b[:len(b)-1]
+		}
+		return string(b) + "...(truncated)"
 	}
 	return s
 }

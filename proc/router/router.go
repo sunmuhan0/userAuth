@@ -16,7 +16,8 @@ type Router struct {
 
 // Setup 配置路由并返回gin.Engine
 func (r *Router) Setup() *gin.Engine {
-	r.Engine = gin.Default()
+	r.Engine = gin.New()
+	r.Engine.Use(gin.Recovery())
 
 	// 全局中间件（所有请求最先经过）
 	r.Engine.Use(filter.TraceFilter())            // 1. 生成/提取 trace_id
@@ -30,11 +31,9 @@ func (r *Router) Setup() *gin.Engine {
 
 	authHandler := &handler.AuthHandler{}
 	authFilter := &filter.AuthFilter{}
-	publicFilter := &filter.PublicFilter{}
 
 	// ========== 公开路由组（无需鉴权） ==========
 	publicGroup := r.Engine.Group("/api/v1")
-	publicGroup.Use(publicFilter.Filter)
 	{
 		publicGroup.POST("/register", authHandler.Register)
 		publicGroup.POST("/login", authHandler.Login)
@@ -43,7 +42,6 @@ func (r *Router) Setup() *gin.Engine {
 
 	// ========== 需要Bearer Token鉴权的路由组 ==========
 	authGroup := r.Engine.Group("/api/v1")
-	authGroup.Use(publicFilter.Filter)
 	authGroup.Use(authFilter.Filter)
 	{
 		authGroup.POST("/logout", authHandler.Logout)

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -56,9 +57,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	resp, err := sp.Get().AuthManager.Register(c.Request.Context(), req.Username, req.Password, req.Nickname, req.Email)
 	if err != nil {
+		errMsg := fmt.Sprintf("register failed: %v", err)
 		c.JSON(http.StatusConflict, gin.H{
 			"code":    409,
-			"message": err.Error(),
+			"message": errMsg,
 		})
 		return
 	}
@@ -116,15 +118,32 @@ func (h *AuthHandler) Login(c *gin.Context) {
 // Logout 注销接口
 func (h *AuthHandler) Logout(c *gin.Context) {
 	// access_token 从 context 中获取（鉴权中间件已写入）
-	accessToken, _ := c.Get("token")
+	accessToken, exists := c.Get("token")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"code":    401,
+			"message": "user not authenticated",
+		})
+		return
+	}
+
+	accessTokenStr, ok := accessToken.(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "invalid token format",
+		})
+		return
+	}
 
 	// refresh_token 从请求body中获取
 	var req LogoutRequest
-	_ = c.ShouldBindJSON(&req)
-
-	accessTokenStr := ""
-	if accessToken != nil {
-		accessTokenStr = accessToken.(string)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "invalid request: " + err.Error(),
+		})
+		return
 	}
 
 	_, err := sp.Get().AuthManager.Logout(c.Request.Context(), accessTokenStr, req.RefreshToken)
@@ -184,11 +203,20 @@ func (h *AuthHandler) GetUserInfo(c *gin.Context) {
 		return
 	}
 
-	resp, err := sp.Get().AuthManager.GetUserInfo(c.Request.Context(), userID.(string))
+	userIDStr, ok := userID.(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "invalid user id format",
+		})
+		return
+	}
+
+	resp, err := sp.Get().AuthManager.GetUserInfo(c.Request.Context(), userIDStr)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    404,
-			"message": err.Error(),
+			"message": "user not found",
 		})
 		return
 	}
@@ -228,11 +256,20 @@ func (h *AuthHandler) UpdateUserInfo(c *gin.Context) {
 		return
 	}
 
-	resp, err := sp.Get().AuthManager.UpdateUserInfo(c.Request.Context(), userID.(string), req.Nickname, req.Email, req.Avatar)
+	userIDStr, ok := userID.(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "invalid user id format",
+		})
+		return
+	}
+
+	resp, err := sp.Get().AuthManager.UpdateUserInfo(c.Request.Context(), userIDStr, req.Nickname, req.Email, req.Avatar)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
-			"message": err.Error(),
+			"message": "update failed",
 		})
 		return
 	}

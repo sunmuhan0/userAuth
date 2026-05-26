@@ -1,13 +1,17 @@
 package filter
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"ttuser/proc/sp"
 )
+
+const authGRPCTimeout = 10 * time.Second
 
 // AuthFilter Bearer Token鉴权过滤器
 // 用于需要用户登录态的路由组
@@ -40,7 +44,9 @@ func (f *AuthFilter) Filter(c *gin.Context) {
 	tokenStr := parts[1]
 
 	// 3. 通过ServiceProvider获取AuthManager，调gRPC验证token
-	resp, err := sp.Get().AuthManager.ValidateToken(c.Request.Context(), tokenStr)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), authGRPCTimeout)
+	defer cancel()
+	resp, err := sp.Get().AuthManager.ValidateToken(ctx, tokenStr)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    401,
@@ -53,7 +59,7 @@ func (f *AuthFilter) Filter(c *gin.Context) {
 	if !resp.Valid {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    401,
-			"message": "invalid or expired token: " + resp.Message,
+			"message": "invalid or expired token",
 		})
 		c.Abort()
 		return

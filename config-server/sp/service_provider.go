@@ -24,10 +24,17 @@ func Init() {
 		panic("[config-server] serviceProvider not found in inji container")
 	}
 	once.Do(func() {
-		instance = obj.(*ServiceProvider)
+		var ok bool
+		instance, ok = obj.(*ServiceProvider)
+		if !ok {
+			panic("[config-server] serviceProvider is not *ServiceProvider type")
+		}
 	})
 }
 
 func Get() *ServiceProvider {
+	if instance == nil {
+		panic("[config-server] ServiceProvider not initialized: call Init() first")
+	}
 	return instance
 }

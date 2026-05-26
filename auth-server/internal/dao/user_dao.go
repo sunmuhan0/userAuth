@@ -17,6 +17,8 @@ var (
 	ErrUserAlreadyExists = errors.New("username already exists")
 )
 
+const usersColumns = "id, username, password, nickname, email, avatar, created_at, updated_at"
+
 // UserRecord 用户数据库记录
 type UserRecord struct {
 	ID        string    `db:"id"`
@@ -49,7 +51,7 @@ func (d *UserDAO) Create(ctx context.Context, username, password, nickname, emai
 		UpdatedAt: now,
 	}
 
-	err := d.Mysql.Add("users", record, false)
+	err := d.Mysql.Add("users", record, false /* ondupUpdate */)
 	if err != nil {
 		if isDuplicateEntry(err) {
 			return nil, ErrUserAlreadyExists
@@ -64,7 +66,7 @@ func (d *UserDAO) Create(ctx context.Context, username, password, nickname, emai
 func (d *UserDAO) GetByID(ctx context.Context, id string) (*UserRecord, error) {
 	result, err := d.Mysql.Query(
 		(*UserRecord)(nil),
-		"SELECT id, username, password, nickname, email, avatar, created_at, updated_at FROM users WHERE id = ?",
+		"SELECT "+usersColumns+" FROM users WHERE id = ?",
 		id,
 	)
 	if err != nil {
@@ -73,14 +75,18 @@ func (d *UserDAO) GetByID(ctx context.Context, id string) (*UserRecord, error) {
 	if result == nil {
 		return nil, ErrUserNotFound
 	}
-	return result.(*UserRecord), nil
+	record, ok := result.(*UserRecord)
+	if !ok {
+		return nil, fmt.Errorf("unexpected type: %T", result)
+	}
+	return record, nil
 }
 
 // GetByUsername 根据用户名获取用户
 func (d *UserDAO) GetByUsername(ctx context.Context, username string) (*UserRecord, error) {
 	result, err := d.Mysql.Query(
 		(*UserRecord)(nil),
-		"SELECT id, username, password, nickname, email, avatar, created_at, updated_at FROM users WHERE username = ?",
+		"SELECT "+usersColumns+" FROM users WHERE username = ?",
 		username,
 	)
 	if err != nil {
@@ -89,11 +95,19 @@ func (d *UserDAO) GetByUsername(ctx context.Context, username string) (*UserReco
 	if result == nil {
 		return nil, ErrUserNotFound
 	}
-	return result.(*UserRecord), nil
+	record, ok := result.(*UserRecord)
+	if !ok {
+		return nil, fmt.Errorf("unexpected type: %T", result)
+	}
+	return record, nil
 }
 
 // Update 更新用户信息
 func (d *UserDAO) Update(ctx context.Context, id, nickname, email, avatar string) (*UserRecord, error) {
+	if id == "" {
+		return nil, errors.New("user id is required for update")
+	}
+
 	fieldsToUpdate := make([]string, 0)
 	record := &UserRecord{ID: id}
 

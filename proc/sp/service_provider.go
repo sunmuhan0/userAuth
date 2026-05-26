@@ -26,11 +26,18 @@ func Init() {
 		panic("[proc] serviceProvider not found in inji container")
 	}
 	once.Do(func() {
-		instance = obj.(*ServiceProvider)
+		var ok bool
+		instance, ok = obj.(*ServiceProvider)
+		if !ok {
+			panic("[proc] serviceProvider is not *ServiceProvider type")
+		}
 	})
 }
 
 // Get 获取ServiceProvider单例
 func Get() *ServiceProvider {
+	if instance == nil {
+		panic("[proc] ServiceProvider not initialized: call Init() first")
+	}
 	return instance
 }
