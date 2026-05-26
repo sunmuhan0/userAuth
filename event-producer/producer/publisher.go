@@ -16,10 +16,10 @@ type IEventPublisher interface {
 }
 
 // RMQPublisher 基于RabbitMQ的事件发布实现
-// 通过inji注入Config，Start()时自动连接RabbitMQ
-// 任何服务引用event-producer模块，注入*RMQPublisher即可使用
+// Config通过inji注入，各服务自定义配置实现
+// Start()时自动连接RabbitMQ
 type RMQPublisher struct {
-	Config *RMQConfig `inject:"rmqProducerConfig"`
+	Config IRMQProducerConfig `inject:"rmqProducerConfig"`
 	conn   *amqp.Connection
 	ch     *amqp.Channel
 	mu     sync.Mutex
@@ -31,7 +31,7 @@ func (p *RMQPublisher) Start() error {
 	defer p.mu.Unlock()
 
 	var err error
-	p.conn, err = amqp.Dial(p.Config.URL)
+	p.conn, err = amqp.Dial(p.Config.GetURL())
 	if err != nil {
 		return fmt.Errorf("failed to connect to RabbitMQ: %w", err)
 	}
@@ -43,8 +43,8 @@ func (p *RMQPublisher) Start() error {
 
 	// 声明交换机
 	err = p.ch.ExchangeDeclare(
-		p.Config.Exchange,
-		p.Config.ExchangeType,
+		p.Config.GetExchange(),
+		p.Config.GetExchangeType(),
 		true,  // durable
 		false, // auto-deleted
 		false, // internal
@@ -55,7 +55,7 @@ func (p *RMQPublisher) Start() error {
 		return fmt.Errorf("failed to declare exchange: %w", err)
 	}
 
-	fmt.Printf("[event-producer] connected to RabbitMQ, exchange=%s\n", p.Config.Exchange)
+	fmt.Printf("[event-producer] connected to RabbitMQ, exchange=%s\n", p.Config.GetExchange())
 	return nil
 }
 
@@ -72,10 +72,10 @@ func (p *RMQPublisher) Publish(routingKey string, payload interface{}) error {
 	}
 
 	err = p.ch.Publish(
-		p.Config.Exchange, // exchange
-		routingKey,        // routing key
-		false,             // mandatory
-		false,             // immediate
+		p.Config.GetExchange(), // exchange
+		routingKey,             // routing key
+		false,                  // mandatory
+		false,                  // immediate
 		amqp.Publishing{
 			DeliveryMode: amqp.Persistent,
 			ContentType:  "application/json",
