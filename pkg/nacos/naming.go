@@ -2,12 +2,29 @@ package nacos
 
 import (
 	"fmt"
+	"net"
+	"reflect"
+
+	configclient "ttuser/config-client/client"
 
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/naming_client"
 	"github.com/nacos-group/nacos-sdk-go/v2/common/constant"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
+	"github.com/teou/implmap"
+	"github.com/teou/inji"
 )
+
+func init() {
+	implmap.Add("serviceRegistrar", reflect.TypeOf((*Registry)(nil)))
+}
+
+// IServiceRegistrar 服务注册接口
+// 业务层依赖此接口，由基础设施层（如 Nacos）实现
+type IServiceRegistrar interface {
+	Start() error
+	Close()
+}
 
 type Config struct {
 	ServerAddr  string `json:"server_addr"`
@@ -17,7 +34,123 @@ type Config struct {
 	CacheDir    string `json:"cache_dir"`
 }
 
-func NewNamingClient(cfg *Config) (naming_client.INamingClient, error) {
+type Registry struct {
+	client      naming_client.INamingClient
+	serviceName string
+	ip          string
+	port        uint64
+}
+
+func (r *Registry) Start() error {
+	if r.client == nil {
+		if err := r.initLazy(); err != nil {
+			return err
+		}
+	}
+	if r.client == nil {
+		return nil
+	}
+	if _, err := r.client.RegisterInstance(vo.RegisterInstanceParam{
+		Ip:          r.ip,
+		Port:        r.port,
+		Weight:      10,
+		Enable:      true,
+		Healthy:     true,
+		ServiceName: r.serviceName,
+		GroupName:   "DEFAULT_GROUP",
+		Ephemeral:   true,
+	}); err != nil {
+		return fmt.Errorf("register to nacos failed: %w", err)
+	}
+	fmt.Printf("[nacos] registered: %s -> %s:%d\n", r.serviceName, r.ip, r.port)
+	return nil
+}
+
+func (r *Registry) Close() {
+	if r.client == nil {
+		return
+	}
+	if _, err := r.client.DeregisterInstance(vo.DeregisterInstanceParam{
+		Ip:          r.ip,
+		Port:        r.port,
+		ServiceName: r.serviceName,
+		GroupName:   "DEFAULT_GROUP",
+		Ephemeral:   true,
+	}); err != nil {
+		fmt.Printf("[nacos] deregister error: %v\n", err)
+		return
+	}
+	fmt.Printf("[nacos] deregistered: %s -> %s:%d\n", r.serviceName, r.ip, r.port)
+}
+
+func (r *Registry) initLazy() error {
+	sv, ok := inji.Find("serverName")
+	if !ok {
+		return fmt.Errorf("serverName not found in DI container")
+	}
+	serviceName := sv.(string)
+
+	ip := getLocalIP()
+
+	port := uint64(9090)
+	if pv, ok := inji.Find("serverPort"); ok {
+		fmt.Sscanf(fmt.Sprintf("%v", pv), "%d", &port)
+	}
+
+	var cfg Config
+	if err := configclient.LoadFile(serviceName, "nacos.json", &cfg); err != nil {
+		return fmt.Errorf("load nacos config failed: %w", err)
+	}
+	client, err := newNamingClient(&cfg)
+	if err != nil {
+		return err
+	}
+	r.client = client
+	r.serviceName = serviceName
+	r.ip = ip
+	r.port = port
+	return nil
+}
+
+func getLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "127.0.0.1"
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+			return ipnet.IP.String()
+		}
+	}
+	return "127.0.0.1"
+}
+
+func Discover(myServiceName, targetServiceName string) (string, error) {
+	var cfg Config
+	if err := configclient.LoadFile(myServiceName, "nacos.json", &cfg); err != nil {
+		return "", fmt.Errorf("load nacos config failed: %w", err)
+	}
+	client, err := newNamingClient(&cfg)
+	if err != nil {
+		return "", err
+	}
+	defer client.CloseClient()
+
+	instance, err := client.SelectOneHealthyInstance(vo.SelectOneHealthInstanceParam{
+		ServiceName: targetServiceName,
+		GroupName:   "DEFAULT_GROUP",
+		Clusters:    []string{"DEFAULT"},
+	})
+	if err != nil {
+		return "", fmt.Errorf("discover %s failed: %w", targetServiceName, err)
+	}
+	if instance == nil {
+		return "", fmt.Errorf("no healthy instance found for %s", targetServiceName)
+	}
+	return fmt.Sprintf("%s:%d", instance.Ip, instance.Port), nil
+}
+
+func newNamingClient(cfg *Config) (naming_client.INamingClient, error) {
 	if cfg.ServerAddr == "" {
 		cfg.ServerAddr = "127.0.0.1"
 	}
@@ -27,7 +160,6 @@ func NewNamingClient(cfg *Config) (naming_client.INamingClient, error) {
 	if cfg.NamespaceID == "" {
 		cfg.NamespaceID = "public"
 	}
-
 	cc := constant.NewClientConfig(
 		constant.WithNamespaceId(cfg.NamespaceID),
 		constant.WithTimeoutMs(5000),
@@ -39,7 +171,6 @@ func NewNamingClient(cfg *Config) (naming_client.INamingClient, error) {
 	sc := []constant.ServerConfig{
 		*constant.NewServerConfig(cfg.ServerAddr, cfg.ServerPort),
 	}
-
 	client, err := clients.NewNamingClient(vo.NacosClientParam{
 		ClientConfig:  cc,
 		ServerConfigs: sc,

@@ -5,9 +5,11 @@ go 1.21
 require (
 	github.com/nacos-group/nacos-sdk-go/v2 v2.3.5
 	github.com/prometheus/client_golang v1.16.0
+	github.com/teou/implmap v0.0.0-20220223051011-e99c668c6344
 	github.com/teou/inji v1.1.2
 	go.uber.org/zap v1.24.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
+	ttuser/config-client v0.0.0
 )
 
 require (
@@ -51,7 +53,6 @@ require (
 	github.com/prometheus/client_model v0.4.0 // indirect
 	github.com/prometheus/common v0.44.0 // indirect
 	github.com/prometheus/procfs v0.11.1 // indirect
-	github.com/teou/implmap v0.0.0-20181215111212-373d77bc2b63 // indirect
 	github.com/teou/ordered_map v1.0.0 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
@@ -67,3 +68,5 @@ require (
 	google.golang.org/protobuf v1.36.5 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )
+
+replace ttuser/config-client => ../config-client

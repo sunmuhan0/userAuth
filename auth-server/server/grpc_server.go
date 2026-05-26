@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/nacos-group/nacos-sdk-go/v2/clients/naming_client"
-	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 	"github.com/teou/inji"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -19,6 +17,7 @@ import (
 	"ttuser/auth-server/internal/service"
 	"ttuser/auth-server/pkg/interceptor"
 	configclient "ttuser/config-client/client"
+	pnacos "ttuser/pkg/nacos"
 )
 
 const (
@@ -28,14 +27,14 @@ const (
 // AuthGRPCServer gRPC服务端实现
 type AuthGRPCServer struct {
 	pb.UnimplementedAuthServiceServer
-	AuthService  *service.AuthServiceImpl `inject:"authService"`
-	server       *grpc.Server
-	namingClient naming_client.INamingClient
+	AuthService *service.AuthServiceImpl `inject:"authService"`
+	server      *grpc.Server
+	registrar   pnacos.IServiceRegistrar `inject:"serviceRegistrar"`
 }
 
-// SetNamingClient 设置 Nacos 命名客户端
-func (s *AuthGRPCServer) SetNamingClient(nc naming_client.INamingClient) {
-	s.namingClient = nc
+// SetRegistrar 设置服务注册器
+func (s *AuthGRPCServer) SetRegistrar(r pnacos.IServiceRegistrar) {
+	s.registrar = r
 }
 
 // Run 启动gRPC服务（带TLS）
@@ -75,72 +74,15 @@ func (s *AuthGRPCServer) Run() error {
 	)
 	pb.RegisterAuthServiceServer(s.server, s)
 
-	// 注册到 Nacos
-	if s.namingClient != nil {
-		ip := getLocalIP()
-		if _, err := s.namingClient.RegisterInstance(vo.RegisterInstanceParam{
-			Ip:          ip,
-			Port:        uint64(port),
-			Weight:      10,
-			Enable:      true,
-			Healthy:     true,
-			ServiceName: svc,
-			GroupName:   "DEFAULT_GROUP",
-			Ephemeral:   true,
-		}); err != nil {
-			return fmt.Errorf("failed to register to nacos: %w", err)
-		}
-		fmt.Printf("[auth-server] registered to nacos: %s -> %s:%d\n", svc, ip, port)
-	}
-
 	fmt.Printf("[auth-server] gRPC listening on :%d (TLS)\n", port)
 	return s.server.Serve(lis)
 }
 
 // Stop 优雅停止
 func (s *AuthGRPCServer) Stop() {
-	svc := "auth-server"
-	if v, ok := inji.Find("serverName"); ok {
-		svc = v.(string)
-	}
-
-	// 从 Nacos 注销
-	if s.namingClient != nil {
-		ip := getLocalIP()
-		port := defaultPort
-		if v, ok := inji.Find("serverPort"); ok {
-			fmt.Sscanf(fmt.Sprintf("%v", v), "%d", &port)
-		}
-		if _, err := s.namingClient.DeregisterInstance(vo.DeregisterInstanceParam{
-			Ip:          ip,
-			Port:        uint64(port),
-			ServiceName: svc,
-			GroupName:   "DEFAULT_GROUP",
-			Ephemeral:   true,
-		}); err != nil {
-			fmt.Printf("[auth-server] failed to deregister from nacos: %v\n", err)
-		} else {
-			fmt.Println("[auth-server] deregistered from nacos")
-		}
-	}
-
 	if s.server != nil {
 		s.server.GracefulStop()
 	}
-}
-
-// getLocalIP 获取本机内网IP
-func getLocalIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "127.0.0.1"
-	}
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-			return ipnet.IP.String()
-		}
-	}
-	return "127.0.0.1"
 }
 
 // Register 注册RPC
