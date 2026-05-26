@@ -6,7 +6,6 @@ import (
 	"github.com/teou/inji"
 
 	"ttuser/auth-server/internal/dao"
-	_ "ttuser/auth-server/internal/mq" // init()注册 rmqProducerConfig 实现
 	"ttuser/auth-server/internal/service"
 	"ttuser/auth-server/pkg/token"
 	"ttuser/auth-server/server"

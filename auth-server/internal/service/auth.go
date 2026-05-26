@@ -58,7 +58,7 @@ func (s *AuthServiceImpl) Register(ctx context.Context, username, password, nick
 		return nil, err
 	}
 
-	// 发布用户注册事件到RMQ，通知下游服务（短信、邮件等）
+	// 发布用户注册事件到RocketMQ，通知下游服务（短信、邮件等）
 	if s.EventPublisher != nil {
 		payload := &UserRegisteredPayload{
 			UserID:   record.ID,
@@ -67,7 +67,7 @@ func (s *AuthServiceImpl) Register(ctx context.Context, username, password, nick
 			Email:    record.Email,
 			Nickname: record.Nickname,
 		}
-		if err := s.EventPublisher.Publish(EventTypeUserRegistered, payload); err != nil {
+		if err := s.EventPublisher.Publish(TopicUser, TagUserRegistered, payload); err != nil {
 			// 发送MQ失败不影响注册主流程，仅记录日志
 			fmt.Printf("[auth-service] failed to publish user registered event: %v\n", err)
 		}

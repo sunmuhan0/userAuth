@@ -1,10 +1,11 @@
 package service
 
-// 事件类型常量（本服务发布的事件routing key）
+// RocketMQ Topic 和 Tag 常量
 const (
-	EventTypeUserRegistered = "user.registered"
-	EventTypeUserUpdated    = "user.updated"
-	EventTypeUserDeleted    = "user.deleted"
+	TopicUser         = "UserTopic"
+	TagUserRegistered = "registered"
+	TagUserUpdated    = "updated"
+	TagUserDeleted    = "deleted"
 )
 
 // UserRegisteredPayload 用户注册事件载荷
