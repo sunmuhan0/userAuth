@@ -60,17 +60,14 @@ func (s *AuthServiceImpl) Register(ctx context.Context, username, password, nick
 
 	// 发布用户注册事件到RMQ，通知下游服务（短信、邮件等）
 	if s.EventPublisher != nil {
-		event := &producer.Event{
-			Type: EventTypeUserRegistered,
-			Payload: &UserRegisteredPayload{
-				UserID:   record.ID,
-				Username: record.Username,
-				Phone:    "", // TODO: 后续扩展用户注册时传入手机号
-				Email:    record.Email,
-				Nickname: record.Nickname,
-			},
+		payload := &UserRegisteredPayload{
+			UserID:   record.ID,
+			Username: record.Username,
+			Phone:    "", // TODO: 后续扩展用户注册时传入手机号
+			Email:    record.Email,
+			Nickname: record.Nickname,
 		}
-		if err := s.EventPublisher.Publish(EventTypeUserRegistered, event); err != nil {
+		if err := s.EventPublisher.Publish(EventTypeUserRegistered, payload); err != nil {
 			// 发送MQ失败不影响注册主流程，仅记录日志
 			fmt.Printf("[auth-service] failed to publish user registered event: %v\n", err)
 		}

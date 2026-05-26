@@ -10,8 +10,9 @@ import (
 
 // IEventPublisher 事件发布接口
 // 任何服务需要发MQ消息，注入该接口即可
+// payload为任意struct，由调用方定义，内部JSON序列化后发送
 type IEventPublisher interface {
-	Publish(routingKey string, event *Event) error
+	Publish(routingKey string, payload interface{}) error
 }
 
 // RMQPublisher 基于RabbitMQ的事件发布实现
@@ -58,14 +59,16 @@ func (p *RMQPublisher) Start() error {
 	return nil
 }
 
-// Publish 发布事件到MQ
-func (p *RMQPublisher) Publish(routingKey string, event *Event) error {
+// Publish 发布消息到MQ
+// routingKey 决定消息路由到哪些队列
+// payload 为任意struct，JSON序列化后作为消息体
+func (p *RMQPublisher) Publish(routingKey string, payload interface{}) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	body, err := json.Marshal(event)
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal event: %w", err)
+		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	err = p.ch.Publish(
@@ -80,10 +83,10 @@ func (p *RMQPublisher) Publish(routingKey string, event *Event) error {
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to publish event [%s]: %w", routingKey, err)
+		return fmt.Errorf("failed to publish [%s]: %w", routingKey, err)
 	}
 
-	fmt.Printf("[event-producer] published event: type=%s, routingKey=%s\n", event.Type, routingKey)
+	fmt.Printf("[event-producer] published: routingKey=%s\n", routingKey)
 	return nil
 }
 
