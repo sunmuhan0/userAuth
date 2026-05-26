@@ -25,10 +25,10 @@ var (
 
 // AuthServiceImpl 认证服务实现
 type AuthServiceImpl struct {
-	UserDAO        *dao.UserDAO         `inject:"userDAO"`
-	TokenDAO       *dao.TokenDAO        `inject:"tokenDAO"`
-	TokenMgr       *token.JWTManager    `inject:"tokenManager"`
-	EventPublisher producer.IEventPublisher `inject:"eventPublisher"`
+	UserDAO        *dao.UserDAO           `inject:"userDAO"`
+	TokenDAO       *dao.TokenDAO          `inject:"tokenDAO"`
+	TokenMgr       *token.JWTManager      `inject:"tokenManager"`
+	EventPublisher producer.IRmqPublisher `inject:"eventPublisher"`
 }
 
 // Register 用户注册

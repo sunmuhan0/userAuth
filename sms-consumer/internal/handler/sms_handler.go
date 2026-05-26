@@ -18,7 +18,7 @@ type UserRegisteredPayload struct {
 }
 
 // SMSHandler 短信事件处理器
-// 消息体即为payload JSON（无Event包装），routing key已由RMQ层面路由到对应队列
+// 消息体即为payload JSON，由RocketMQ按topic+tag路由
 type SMSHandler struct {
 	Sender *sms.Sender `inject:"smsSender"`
 }

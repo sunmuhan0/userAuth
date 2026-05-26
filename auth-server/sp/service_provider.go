@@ -17,13 +17,13 @@ import (
 // 字段顺序即创建顺序，被依赖的放前面
 // ProcMysql 使用接口类型，需要通过 implmap 注册具体实现
 type ServiceProvider struct {
-	ProcMysql   engine.IMysqlClient      `inject:"procMysqlClient"`
-	UserDAO     *dao.UserDAO             `inject:"userDAO"`
-	TokenDAO    *dao.TokenDAO            `inject:"tokenDAO"`
-	TokenMgr    *token.JWTManager        `inject:"tokenManager"`
-	EventPublisher *producer.RMQPublisher   `inject:"eventPublisher"`
-	AuthService *service.AuthServiceImpl `inject:"authService"`
-	GRPCServer  *server.AuthGRPCServer   `inject:"grpcServer"`
+	ProcMysql      engine.IMysqlClient         `inject:"procMysqlClient"`
+	UserDAO        *dao.UserDAO                `inject:"userDAO"`
+	TokenDAO       *dao.TokenDAO               `inject:"tokenDAO"`
+	TokenMgr       *token.JWTManager           `inject:"tokenManager"`
+	EventPublisher *producer.EventRMQPublisher `inject:"eventPublisher"`
+	AuthService    *service.AuthServiceImpl    `inject:"authService"`
+	GRPCServer     *server.AuthGRPCServer      `inject:"grpcServer"`
 }
 
 var (
