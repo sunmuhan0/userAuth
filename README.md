@@ -28,13 +28,15 @@ ttuser/
 │       ├── config.go         # RMQConfig（NameServer + GroupName）
 │       └── publisher.go      # EventRMQPublisher 实现（Start/Publish/Close）
 │
-├── async-handler/             # 短信消费服务（RocketMQ PushConsumer）
+├── async-handler/            # 异步消息处理服务（RocketMQ PushConsumer）
 │   ├── cmd/server/main.go    # 入口（inji.Reg → sp.Init）
-│   ├── server/server.go      # RMQConfig + SMSConsumerServer（多topic订阅，按topic路由handler）
-│   ├── internal/
-│   │   ├── handler/          # SMSHandler（实现IMessageHandler）
-│   │   └── sms/              # Sender + Config（短信发送，当前模拟）
-│   └── sp/                   # ServiceProvider（注册handler到server）
+│   ├── pkg/router/           # 通用消息路由框架（Engine + TopicGroup + WrapHandleFunc）
+│   ├── biz/
+│   │   ├── register/         # 路由注册（统一配置topic/tag/handler映射）
+│   │   └── actions/          # 业务action函数（强类型，自动反序列化）
+│   ├── server/server.go      # ConsumerServer（基于router.Engine启动PushConsumer）
+│   ├── internal/sms/         # 短信发送（Sender + Config）
+│   └── sp/                   # ServiceProvider
 │
 ├── config-server/            # 配置中心服务（MySQL存储 + HTTP API + AES加密）
 │   ├── cmd/server/main.go
@@ -154,42 +156,48 @@ curl -X POST http://localhost:7963/config/encrypted \
 ```go
 // 接口定义
 type IRmqPublisher interface {
-    Publish(topic string, tag string, key string, payload interface{}) error
+    Publish(ctx context.Context, topic string, tag string, payload interface{}) error
 }
 
-// 业务调用示例（auth-server）
-s.EventPublisher.Publish("UserTopic", "registered", userID, payload)
+// 业务调用示例（auth-server），trace_id自动从ctx提取写入message key
+s.EventPublisher.Publish(ctx, "UserTopic", "registered", payload)
 ```
 
-- 配置（NameServer、GroupName）在 `producer/config.go` 的 `Start()` 中初始化
+- 配置从配置中心获取（降级用默认值）
+- trace_id 自动从 ctx 提取，写入 RocketMQ message key（便于控制台按 trace_id 检索）
 - 通过 implmap 注册，业务方 inji 注入即可使用，无需手动构造
 
 ### 消费端（async-handler）
 
-基于 RocketMQ PushConsumer，支持多 topic 订阅，按 topic 路由到对应 handler：
+基于 RocketMQ PushConsumer + router engine，支持多 topic 订阅，按 tag 路由到对应 handler：
 
 ```go
-// 订阅配置
-Subscriptions: []Subscription{
-    {Topic: "UserTopic", Tag: "registered", HandlerName: "userRegisteredHandler"},
-    // 新增订阅只需加一行
+// biz/register/register.go — 统一注册路由
+func InitRouter(engine *router.Engine) error {
+    userGroup := engine.NewTopicGroup("sms-consumer-group", "UserTopic")
+    h, _ := router.WrapHandleFunc(actions.UserRegistered)
+    userGroup.Handle("registered", h)
+    return nil
 }
 
-// handler 注册（ServiceProvider.Start()中）
-p.Server.RegisterHandler("userRegisteredHandler", p.SMSHandler)
+// biz/actions/user_registered.go — 强类型action函数
+func UserRegistered(ctx context.Context, req *UserRegisteredReq) error {
+    log.Info(ctx, "user registered", "user_id", req.UserID)
+    return sms.GetSender().SendRegistrationSMS(req.Phone, req.Username)
+}
 ```
 
-- 每个 Subscription 指定 topic + tag + handler 名称
-- `SMSConsumerServer.Start()` 时按配置订阅，消息到达后路由到对应 handler
-- handler 实现 `IMessageHandler` 接口：`Handle(body []byte) error`
+- `router.WrapHandleFunc` 自动将 `func(ctx, *T) error` 包装为 handler（反射反序列化 JSON → typed struct）
+- 消息到达时从 message key 提取 trace_id，构建 ctx 传入 handler
+- 新增业务只需：写 action 函数 + register 加一行
 
 ### 扩展方式
 
 | 场景 | 操作 |
 |------|------|
-| auth-server 发新事件 | 定义新 payload，调用 `Publish("Topic", "tag", key, payload)` |
+| auth-server 发新事件 | 定义新 payload，调用 `Publish(ctx, "Topic", "tag", payload)` |
 | 其他服务也要发消息 | 引用 `event-producer`，inji 注入 `IRmqPublisher`，直接调用 |
-| async-handler 订阅新 topic | config 加 Subscription + 写新 handler + SP 注册 |
+| async-handler 订阅新 topic | 写 action 函数 + `register.go` 加一行路由注册 |
 
 ## 快速开始
 
@@ -206,6 +214,8 @@ p.Server.RegisterHandler("userRegisteredHandler", p.SMSHandler)
 mysql -u root -p123456 -e "CREATE DATABASE IF NOT EXISTS ttuser"
 mysql -u root -p123456 ttuser < data-store/ddl/001_create_users.sql
 mysql -u root -p123456 ttuser < data-store/ddl/002_create_token_blacklist.sql
+mysql -u root -p123456 ttuser < data-store/ddl/003_create_configs.sql
+mysql -u root -p123456 ttuser < data-store/ddl/004_insert_configs.sql
 ```
 
 ### 3. 启动 RocketMQ
@@ -221,23 +231,33 @@ nohup sh mqbroker -n 127.0.0.1:9876 &
 ### 4. 启动服务
 
 ```bash
-# 终端1：启动 auth-server (gRPC :9090)
+# 终端1：启动配置中心 (:7963)
+cd config-server && go run ./cmd/server/
+
+# 终端2：启动 auth-server (gRPC :9090)
 cd auth-server && go run ./cmd/server/
 
-# 终端2：启动 proc (HTTP :8080)
+# 终端3：启动 proc (HTTP :8080)
 cd proc && go run ./cmd/server/
 
-# 终端3：启动 async-handler
+# 终端4：启动 async-handler
 cd async-handler && go run ./cmd/server/
+```
+
+或者一键部署：
+```bash
+make deploy    # 编译+安装+启动所有服务
+make status    # 查看服务状态
+make stop      # 停止所有服务
 ```
 
 ### 5. 运行测试
 
 ```bash
+make build        # 编译所有服务到 bin/
 make test         # 运行所有测试（单元 + e2e）
 make unit-test    # 只跑单元测试
 make e2e-test     # 自动编译→清数据→启动服务→跑 e2e→停服务
-make build        # 编译到 bin/（含 async-handler）
 make proto        # 重新生成 proto 代码
 make clean        # 清理编译产物
 ```
@@ -260,15 +280,37 @@ make clean        # 清理编译产物
 所有组件通过 inji 的 `inject` tag 自动装配。ServiceProvider 只声明外部需要访问的顶层组件，中间依赖由 inji 自动递归创建：
 
 ```
-auth-server ServiceProvider:
-  GRPCServer → AuthService → UserDAO/TokenDAO/TokenMgr/EventPublisher
-                                                        ↓
-                                              RMQConfig → EventRMQPublisher(Start()连接RocketMQ)
+auth-server:
+  GRPCServer → AuthService → DAO/TokenMgr/EventPublisher → RMQConfig(配置中心)
 
-async-handler ServiceProvider:
-  SMSHandler + SMSConsumerServer
-  Start()中注册 handler → Server
-  Server.Start()订阅RocketMQ → 消息到达 → 路由到handler → 发短信
+async-handler:
+  SMSSender + ConsumerServer → router.Engine → actions → SMSSender
+
+config-server:
+  HTTPServer → ConfigService → ConfigDAO → MySQL
+```
+
+### 全链路 trace_id
+
+```
+[HTTP] X-Trace-Id header (TraceFilter 生成/提取)
+  → [gRPC Client Interceptor] ctx → metadata
+    → [gRPC Server Interceptor] metadata → ctx
+      → [Publish] ctx → RocketMQ message key
+        → [Consumer] message key → ctx → action handler
+          → log.Info(ctx, ...) 自动带 trace_id
+```
+
+### 日志
+
+- 框架：zap（JSON结构化）
+- 输出：stdout + 文件（`/home/work/log/{服务名}_{端口}/{日期}.log`）
+- 可选：Loki 直推（开发环境）
+- 生产：Promtail 采集文件 → Loki → Grafana
+
+Access log 示例：
+```json
+{"level":"info","ts":"2026-05-26T10:00:00","msg":"access_log","trace_id":"0af765...","data":{"method":"POST","path":"/api/v1/register","cost":"45ms","uid":"","httpStatus":200,"req":{...},"ret":{...}}}
 ```
 
 ### 认证流程
@@ -294,18 +336,21 @@ async-handler ServiceProvider:
 
 ## 配置说明
 
-当前所有配置写死在代码中（带 `TODO: 后续从配置中心获取` 注释），后续接入配置中心只需修改对应 `Start()` 方法：
+配置优先从配置中心获取（`config-server :7963`），不可用时降级到代码默认值：
 
-| 配置项 | 当前默认值 | 位置 |
-|--------|-----------|------|
-| MySQL DSN | `root:123456@tcp(localhost:3306)/ttuser` | `data-store/engine/proc.go` |
-| JWT Secret | `my-secret-key-for-ttuser-2024` | `auth-server/pkg/token/jwt.go` |
-| Access Token 有效期 | 2h | `auth-server/pkg/token/jwt.go` |
-| Refresh Token 有效期 | 7d | `auth-server/pkg/token/jwt.go` |
-| auth-server gRPC 端口 | 9090 | `auth-server/server/grpc_server.go` |
-| auth-client gRPC 地址 | `localhost:9090` | `auth-client/client/client.go` |
-| proc HTTP 端口 | 8080 | `proc/cmd/server/main.go` (env: HTTP_PORT) |
-| RocketMQ NameServer | `127.0.0.1:9876` | `event-producer/producer/config.go` |
-| RocketMQ Producer Group | `ttuser-producer-group` | `event-producer/producer/config.go` |
-| RocketMQ Consumer Group | `async-handler-group` | `async-handler/server/server.go` |
-| 短信签名 | `TT用户平台` | `async-handler/internal/sms/config.go` |
+| service | key | 内容 | 是否加密 |
+|---------|-----|------|---------|
+| auth-server | jwt | secret, access_expire, refresh_expire | 建议加密 |
+| auth-server | grpc | port, cert, cert_key | 否 |
+| auth-server | mysql | dsn | 加密 |
+| event-producer | rocketmq | name_server, group_name | 否 |
+| async-handler | rocketmq | name_server, consumer_group | 否 |
+| async-handler | sms | api_key, api_secret, sign_name, template | 加密 |
+| proc | server | port | 否 |
+| proc | auth-client | addr, ca_cert | 否 |
+
+### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `CONFIG_ENCRYPT_KEY` | AES加密密钥（32字节） | `ttuser-config-secret-key-2024!!`（仅开发） |
