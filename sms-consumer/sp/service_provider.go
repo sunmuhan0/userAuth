@@ -5,26 +5,15 @@ import (
 
 	"github.com/teou/inji"
 
-	"ttuser/sms-consumer/internal/handler"
+	"ttuser/sms-consumer/internal/sms"
 	"ttuser/sms-consumer/server"
 )
 
 // ServiceProvider 聚合所有服务依赖
-// 只声明需要在Start()中使用或外部访问的顶层组件
-// 中间依赖（smsConfig、smsSender、rmqConfig）由inji自动递归创建
+// SMSSender 需要在SP中声明以确保inji在Server之前创建它（action函数通过sms.GetSender()访问）
 type ServiceProvider struct {
-	SMSHandler *handler.SMSHandler      `inject:"smsHandler"`
-	Server     *server.SMSConsumerServer `inject:"smsConsumerServer"`
-}
-
-// Start 实现 inji.Startable 接口
-// 在所有字段注入完成后，注册handler到Server
-func (p *ServiceProvider) Start() error {
-	// 注册topic对应的handler
-	p.Server.RegisterHandler("userRegisteredHandler", p.SMSHandler)
-	// 以后新增handler只需在这里加一行：
-	// p.Server.RegisterHandler("orderCreatedHandler", p.OrderHandler)
-	return nil
+	SMSSender *sms.Sender          `inject:"smsSender"`
+	Server    *server.ConsumerServer `inject:"consumerServer"`
 }
 
 var (

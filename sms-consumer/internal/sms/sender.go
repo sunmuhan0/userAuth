@@ -5,9 +5,23 @@ import (
 	"log"
 )
 
+var _sender *Sender
+
 // Sender 短信发送器
 type Sender struct {
 	Config *Config `inject:"smsConfig"`
+}
+
+// Start 实现 inji.Startable，注册全局实例
+func (s *Sender) Start() error {
+	_sender = s
+	fmt.Println("[smsSender] initialized")
+	return nil
+}
+
+// GetSender 获取全局短信发送器实例（供action函数调用）
+func GetSender() *Sender {
+	return _sender
 }
 
 // SendRegistrationSMS 发送注册成功短信

@@ -4,120 +4,110 @@ import (
 	"context"
 	"fmt"
 	"log"
-
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/consumer"
 	"github.com/apache/rocketmq-client-go/v2/primitive"
+
+	"ttuser/sms-consumer/biz/register"
+	"ttuser/sms-consumer/pkg/router"
 )
 
-// IMessageHandler 消息处理接口
-// 不同topic的handler实现该接口
-type IMessageHandler interface {
-	Handle(body []byte) error
-}
-
-// Subscription 订阅配置：topic + tag + handler名称
-type Subscription struct {
-	Topic       string
-	Tag         string // 支持 "tagA || tagB" 或 "*" 表示全部
-	HandlerName string // 对应注入的handler名称
-}
-
-// RMQConfig SMS消费者RocketMQ配置
-// 支持多topic订阅，每个topic指定handler
+// RMQConfig RocketMQ消费者配置
 // 实现 inji.Startable，Start中填充配置值
 // 当前写死，后期从配置中心获取
 type RMQConfig struct {
-	NameServer    string
-	ConsumerGroup string
-	Subscriptions []Subscription
+	NameServer string
 }
 
 // Start 实现 inji.Startable 接口
 func (c *RMQConfig) Start() error {
 	c.NameServer = "127.0.0.1:9876"
-	c.ConsumerGroup = "sms-consumer-group"
-	c.Subscriptions = []Subscription{
-		{Topic: "UserTopic", Tag: "registered", HandlerName: "userRegisteredHandler"},
-		// 以后新增订阅只需在这里加一行：
-		// {Topic: "OrderTopic", Tag: "created", HandlerName: "orderCreatedHandler"},
-	}
-	fmt.Println("[rmqConsumerConfig] initialized")
+	fmt.Println("[rmqConfig] initialized")
 	return nil
 }
 
-// SMSConsumerServer 短信消费服务
-// 基于RocketMQ PushConsumer，支持多topic订阅，按topic路由到对应handler
-type SMSConsumerServer struct {
-	Config   *RMQConfig         `inject:"rmqConfig"`
-	Handlers map[string]IMessageHandler
-	consumer rocketmq.PushConsumer
-}
-
-// RegisterHandler 注册topic对应的handler
-func (s *SMSConsumerServer) RegisterHandler(name string, h IMessageHandler) {
-	if s.Handlers == nil {
-		s.Handlers = make(map[string]IMessageHandler)
-	}
-	s.Handlers[name] = h
+// ConsumerServer RocketMQ消费服务
+// 基于 router.Engine 进行 topic/tag 路由
+type ConsumerServer struct {
+	Config    *RMQConfig `inject:"rmqConfig"`
+	consumers []rocketmq.PushConsumer
 }
 
 // Start 实现 inji.Startable 接口
-func (s *SMSConsumerServer) Start() error {
-	var err error
-	s.consumer, err = rocketmq.NewPushConsumer(
+func (s *ConsumerServer) Start() error {
+	// 初始化路由引擎
+	engine := router.NewEngine()
+	if err := register.InitRouter(engine); err != nil {
+		return fmt.Errorf("init router failed: %w", err)
+	}
+
+	// 为每个TopicGroup创建一个PushConsumer
+	for _, group := range engine.Groups {
+		if err := s.startGroup(group); err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("[sms-consumer] started, topicGroups=%d\n", len(engine.Groups))
+	return nil
+}
+
+// startGroup 为一个TopicGroup启动RocketMQ PushConsumer
+func (s *ConsumerServer) startGroup(group *router.TopicGroup) error {
+	c, err := rocketmq.NewPushConsumer(
 		consumer.WithNameServer([]string{s.Config.NameServer}),
-		consumer.WithGroupName(s.Config.ConsumerGroup),
+		consumer.WithGroupName(group.ConsumerGroup),
 		consumer.WithConsumerModel(consumer.Clustering),
 		consumer.WithConsumeFromWhere(consumer.ConsumeFromLastOffset),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create rocketmq consumer: %w", err)
+		return fmt.Errorf("failed to create consumer [group=%s]: %w", group.ConsumerGroup, err)
 	}
 
-	// 注册所有订阅，每个subscription绑定对应的handler
-	for _, sub := range s.Config.Subscriptions {
-		h, ok := s.Handlers[sub.HandlerName]
-		if !ok {
-			return fmt.Errorf("handler [%s] not registered for topic [%s]", sub.HandlerName, sub.Topic)
-		}
+	// 订阅topic，tag expression由router group自动生成
+	tagExpr := group.TagExpression()
+	selector := consumer.MessageSelector{
+		Type:       consumer.TAG,
+		Expression: tagExpr,
+	}
 
-		selector := consumer.MessageSelector{
-			Type:       consumer.TAG,
-			Expression: sub.Tag,
-		}
-		// 闭包捕获当前handler
-		currentHandler := h
-		currentSub := sub
-		err = s.consumer.Subscribe(currentSub.Topic, selector, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
-			for _, msg := range msgs {
-				if err := currentHandler.Handle(msg.Body); err != nil {
-					log.Printf("[sms-consumer] handle error: topic=%s, tag=%s, msgId=%s, err=%v",
-						msg.Topic, msg.GetTags(), msg.MsgId, err)
-					return consumer.ConsumeRetryLater, nil
-				}
-				log.Printf("[sms-consumer] consumed: topic=%s, tag=%s, msgId=%s", msg.Topic, msg.GetTags(), msg.MsgId)
+	// 闭包捕获当前group
+	currentGroup := group
+	err = c.Subscribe(group.Topic, selector, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
+		for _, msg := range msgs {
+			tag := msg.GetTags()
+			handler, ok := currentGroup.GetHandler(tag)
+			if !ok {
+				log.Printf("[sms-consumer] no handler for tag=%s, topic=%s, skip", tag, msg.Topic)
+				continue
 			}
-			return consumer.ConsumeSuccess, nil
-		})
-		if err != nil {
-			return fmt.Errorf("failed to subscribe [topic=%s, tag=%s]: %w", sub.Topic, sub.Tag, err)
+			if err := handler.Handle(msg.Body); err != nil {
+				log.Printf("[sms-consumer] handle error: topic=%s, tag=%s, keys=%s, msgId=%s, err=%v",
+					msg.Topic, tag, msg.GetKeys(), msg.MsgId, err)
+				return consumer.ConsumeRetryLater, nil
+			}
+			log.Printf("[sms-consumer] consumed: topic=%s, tag=%s, keys=%s, msgId=%s",
+				msg.Topic, tag, msg.GetKeys(), msg.MsgId)
 		}
-		log.Printf("[sms-consumer] subscribed: topic=%s, tag=%s, handler=%s", sub.Topic, sub.Tag, sub.HandlerName)
+		return consumer.ConsumeSuccess, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to subscribe [topic=%s, tags=%s]: %w", group.Topic, tagExpr, err)
 	}
 
-	if err = s.consumer.Start(); err != nil {
-		return fmt.Errorf("failed to start rocketmq consumer: %w", err)
+	if err = c.Start(); err != nil {
+		return fmt.Errorf("failed to start consumer [group=%s]: %w", group.ConsumerGroup, err)
 	}
 
-	fmt.Printf("[sms-consumer] started, group=%s, subscriptions=%d\n", s.Config.ConsumerGroup, len(s.Config.Subscriptions))
+	s.consumers = append(s.consumers, c)
+	log.Printf("[sms-consumer] subscribed: group=%s, topic=%s, tags=%s", group.ConsumerGroup, group.Topic, tagExpr)
 	return nil
 }
 
 // Close 实现 inji.Closeable 接口
-func (s *SMSConsumerServer) Close() {
-	if s.consumer != nil {
-		s.consumer.Shutdown()
+func (s *ConsumerServer) Close() {
+	for _, c := range s.consumers {
+		c.Shutdown()
 	}
-	fmt.Println("[sms-consumer-server] shutdown")
+	fmt.Println("[sms-consumer] shutdown")
 }
