@@ -9,36 +9,28 @@ import (
 )
 
 // IEventPublisher 事件发布接口
-// 所有下游服务（SMS、邮件、推送等）通过该接口发布事件到MQ
+// 任何服务需要发MQ消息，注入该接口即可
 type IEventPublisher interface {
-	// Publish 发布事件，routingKey决定哪些消费者收到消息
 	Publish(routingKey string, event *Event) error
-	// Close 关闭连接
-	Close()
 }
 
 // RMQPublisher 基于RabbitMQ的事件发布实现
+// 通过inji注入Config，Start()时自动连接RabbitMQ
+// 任何服务引用event-producer模块，注入*RMQPublisher即可使用
 type RMQPublisher struct {
-	config *RMQConfig
+	Config *RMQConfig `inject:"rmqProducerConfig"`
 	conn   *amqp.Connection
 	ch     *amqp.Channel
 	mu     sync.Mutex
 }
 
-// NewRMQPublisher 创建RMQ事件发布者
-func NewRMQPublisher(config *RMQConfig) *RMQPublisher {
-	return &RMQPublisher{
-		config: config,
-	}
-}
-
-// Connect 建立RabbitMQ连接并声明交换机
-func (p *RMQPublisher) Connect() error {
+// Start 实现 inji.Startable 接口，建立连接并声明交换机
+func (p *RMQPublisher) Start() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	var err error
-	p.conn, err = amqp.Dial(p.config.URL)
+	p.conn, err = amqp.Dial(p.Config.URL)
 	if err != nil {
 		return fmt.Errorf("failed to connect to RabbitMQ: %w", err)
 	}
@@ -48,20 +40,21 @@ func (p *RMQPublisher) Connect() error {
 		return fmt.Errorf("failed to open channel: %w", err)
 	}
 
-	// 声明交换机（topic类型，支持通配符路由）
+	// 声明交换机
 	err = p.ch.ExchangeDeclare(
-		p.config.Exchange,     // name
-		p.config.ExchangeType, // type
-		true,                  // durable
-		false,                 // auto-deleted
-		false,                 // internal
-		false,                 // no-wait
-		nil,                   // arguments
+		p.Config.Exchange,
+		p.Config.ExchangeType,
+		true,  // durable
+		false, // auto-deleted
+		false, // internal
+		false, // no-wait
+		nil,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to declare exchange: %w", err)
 	}
 
+	fmt.Printf("[event-producer] connected to RabbitMQ, exchange=%s\n", p.Config.Exchange)
 	return nil
 }
 
@@ -76,7 +69,7 @@ func (p *RMQPublisher) Publish(routingKey string, event *Event) error {
 	}
 
 	err = p.ch.Publish(
-		p.config.Exchange, // exchange
+		p.Config.Exchange, // exchange
 		routingKey,        // routing key
 		false,             // mandatory
 		false,             // immediate
@@ -94,7 +87,7 @@ func (p *RMQPublisher) Publish(routingKey string, event *Event) error {
 	return nil
 }
 
-// Close 关闭连接
+// Close 实现 inji.Closeable 接口
 func (p *RMQPublisher) Close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -105,4 +98,5 @@ func (p *RMQPublisher) Close() {
 	if p.conn != nil {
 		p.conn.Close()
 	}
+	fmt.Println("[event-producer] connection closed")
 }
