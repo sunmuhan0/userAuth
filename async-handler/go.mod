@@ -1,4 +1,4 @@
-module ttuser/sms-consumer
+module ttuser/async-handler
 
 go 1.18
 

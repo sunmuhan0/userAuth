@@ -28,7 +28,7 @@ ttuser/
 │       ├── config.go         # RMQConfig（NameServer + GroupName）
 │       └── publisher.go      # EventRMQPublisher 实现（Start/Publish/Close）
 │
-├── sms-consumer/             # 短信消费服务（RocketMQ PushConsumer）
+├── async-handler/             # 短信消费服务（RocketMQ PushConsumer）
 │   ├── cmd/server/main.go    # 入口（inji.Reg → sp.Init）
 │   ├── server/server.go      # RMQConfig + SMSConsumerServer（多topic订阅，按topic路由handler）
 │   ├── internal/
@@ -75,7 +75,7 @@ ttuser/
 ```
 用户注册 → auth-server → RocketMQ(topic=UserTopic, tag=registered, key=userID)
                                 ↓
-                         sms-consumer → 发送注册短信
+                         async-handler → 发送注册短信
 ```
 
 ### 生产端（event-producer）
@@ -95,7 +95,7 @@ s.EventPublisher.Publish("UserTopic", "registered", userID, payload)
 - 配置（NameServer、GroupName）在 `producer/config.go` 的 `Start()` 中初始化
 - 通过 implmap 注册，业务方 inji 注入即可使用，无需手动构造
 
-### 消费端（sms-consumer）
+### 消费端（async-handler）
 
 基于 RocketMQ PushConsumer，支持多 topic 订阅，按 topic 路由到对应 handler：
 
@@ -120,7 +120,7 @@ p.Server.RegisterHandler("userRegisteredHandler", p.SMSHandler)
 |------|------|
 | auth-server 发新事件 | 定义新 payload，调用 `Publish("Topic", "tag", key, payload)` |
 | 其他服务也要发消息 | 引用 `event-producer`，inji 注入 `IRmqPublisher`，直接调用 |
-| sms-consumer 订阅新 topic | config 加 Subscription + 写新 handler + SP 注册 |
+| async-handler 订阅新 topic | config 加 Subscription + 写新 handler + SP 注册 |
 
 ## 快速开始
 
@@ -158,8 +158,8 @@ cd auth-server && go run ./cmd/server/
 # 终端2：启动 proc (HTTP :8080)
 cd proc && go run ./cmd/server/
 
-# 终端3：启动 sms-consumer
-cd sms-consumer && go run ./cmd/server/
+# 终端3：启动 async-handler
+cd async-handler && go run ./cmd/server/
 ```
 
 ### 5. 运行测试
@@ -168,7 +168,7 @@ cd sms-consumer && go run ./cmd/server/
 make test         # 运行所有测试（单元 + e2e）
 make unit-test    # 只跑单元测试
 make e2e-test     # 自动编译→清数据→启动服务→跑 e2e→停服务
-make build        # 编译到 bin/（含 sms-consumer）
+make build        # 编译到 bin/（含 async-handler）
 make proto        # 重新生成 proto 代码
 make clean        # 清理编译产物
 ```
@@ -196,7 +196,7 @@ auth-server ServiceProvider:
                                                         ↓
                                               RMQConfig → EventRMQPublisher(Start()连接RocketMQ)
 
-sms-consumer ServiceProvider:
+async-handler ServiceProvider:
   SMSHandler + SMSConsumerServer
   Start()中注册 handler → Server
   Server.Start()订阅RocketMQ → 消息到达 → 路由到handler → 发短信
@@ -205,7 +205,7 @@ sms-consumer ServiceProvider:
 ### 认证流程
 
 ```
-注册: POST /register → proc → gRPC → auth-server → bcrypt加密 → MySQL → 发RocketMQ事件 → sms-consumer发短信
+注册: POST /register → proc → gRPC → auth-server → bcrypt加密 → MySQL → 发RocketMQ事件 → async-handler发短信
 登录: POST /login → proc → gRPC → auth-server → 验密 → 签发 access+refresh token
 请求: GET /user/info → proc filter → gRPC ValidateToken → 检查黑名单+解析JWT
 续签: POST /refresh → proc → gRPC → auth-server → 旧token加黑名单 → 签发新pair
@@ -238,5 +238,5 @@ sms-consumer ServiceProvider:
 | proc HTTP 端口 | 8080 | `proc/cmd/server/main.go` (env: HTTP_PORT) |
 | RocketMQ NameServer | `127.0.0.1:9876` | `event-producer/producer/config.go` |
 | RocketMQ Producer Group | `ttuser-producer-group` | `event-producer/producer/config.go` |
-| RocketMQ Consumer Group | `sms-consumer-group` | `sms-consumer/server/server.go` |
-| 短信签名 | `TT用户平台` | `sms-consumer/internal/sms/config.go` |
+| RocketMQ Consumer Group | `async-handler-group` | `async-handler/server/server.go` |
+| 短信签名 | `TT用户平台` | `async-handler/internal/sms/config.go` |

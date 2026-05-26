@@ -1,8 +1,8 @@
 package register
 
 import (
-	"ttuser/sms-consumer/biz/actions"
-	"ttuser/sms-consumer/pkg/router"
+	"ttuser/async-handler/biz/actions"
+	"ttuser/async-handler/pkg/router"
 )
 
 // 消费者组和Topic常量

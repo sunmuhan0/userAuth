@@ -8,7 +8,7 @@ import (
 
 	"github.com/teou/inji"
 
-	"ttuser/sms-consumer/sp"
+	"ttuser/async-handler/sp"
 )
 
 func main() {

@@ -3,7 +3,7 @@ package actions
 import (
 	"log"
 
-	"ttuser/sms-consumer/internal/sms"
+	"ttuser/async-handler/internal/sms"
 )
 
 // UserRegisteredReq 用户注册事件请求体

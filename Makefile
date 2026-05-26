@@ -1,10 +1,10 @@
-.PHONY: build build-auth-server build-proc build-sms-consumer test unit-test e2e-test clean proto
+.PHONY: build build-auth-server build-proc build-async-handler test unit-test e2e-test clean proto
 
 # 输出目录
 BIN_DIR := ./bin
 
 # 编译所有服务
-build: build-auth-server build-proc build-sms-consumer
+build: build-auth-server build-proc build-async-handler
 
 build-auth-server:
 	@echo "[build] auth-server..."
@@ -14,9 +14,9 @@ build-proc:
 	@echo "[build] proc..."
 	@cd proc && go build -o ../$(BIN_DIR)/proc ./cmd/server/
 
-build-sms-consumer:
-	@echo "[build] sms-consumer..."
-	@cd sms-consumer && go build -o ../$(BIN_DIR)/sms-consumer ./cmd/server/
+build-async-handler:
+	@echo "[build] async-handler..."
+	@cd async-handler && go build -o ../$(BIN_DIR)/async-handler ./cmd/server/
 
 # 运行所有测试
 test: unit-test e2e-test

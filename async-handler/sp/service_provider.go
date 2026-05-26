@@ -5,8 +5,8 @@ import (
 
 	"github.com/teou/inji"
 
-	"ttuser/sms-consumer/internal/sms"
-	"ttuser/sms-consumer/server"
+	"ttuser/async-handler/internal/sms"
+	"ttuser/async-handler/server"
 )
 
 // ServiceProvider 聚合所有服务依赖

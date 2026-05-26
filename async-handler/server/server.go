@@ -8,8 +8,8 @@ import (
 	"github.com/apache/rocketmq-client-go/v2/consumer"
 	"github.com/apache/rocketmq-client-go/v2/primitive"
 
-	"ttuser/sms-consumer/biz/register"
-	"ttuser/sms-consumer/pkg/router"
+	"ttuser/async-handler/biz/register"
+	"ttuser/async-handler/pkg/router"
 )
 
 // RMQConfig RocketMQ消费者配置
