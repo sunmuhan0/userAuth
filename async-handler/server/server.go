@@ -11,20 +11,36 @@ import (
 
 	"ttuser/async-handler/biz/register"
 	"ttuser/async-handler/pkg/router"
+	configclient "ttuser/config-client/client"
 	"ttuser/pkg/trace"
 )
 
 // RMQConfig RocketMQ消费者配置
-// 实现 inji.Startable，Start中填充配置值
-// 当前写死，后期从配置中心获取
+// Start时从配置中心获取，获取失败则用默认值
 type RMQConfig struct {
 	NameServer string
 }
 
 // Start 实现 inji.Startable 接口
 func (c *RMQConfig) Start() error {
-	c.NameServer = "127.0.0.1:9876"
-	fmt.Println("[rmqConfig] initialized")
+	cfg := configclient.DefaultConfig()
+	cfg.ServiceName = "async-handler"
+	cc := configclient.New(cfg)
+	if err := cc.Start(0); err != nil {
+		fmt.Printf("[rmqConfig] config-center unavailable, using defaults: %v\n", err)
+		c.NameServer = "127.0.0.1:9876"
+	} else {
+		var rmqConf struct {
+			NameServer string `json:"name_server"`
+		}
+		if err := cc.Get("rocketmq", &rmqConf); err != nil {
+			fmt.Printf("[rmqConfig] config key 'rocketmq' not found, using defaults: %v\n", err)
+			c.NameServer = "127.0.0.1:9876"
+		} else {
+			c.NameServer = rmqConf.NameServer
+		}
+	}
+	fmt.Printf("[rmqConfig] initialized: nameServer=%s\n", c.NameServer)
 	return nil
 }
 

@@ -5,8 +5,11 @@ go 1.18
 require (
 	google.golang.org/grpc v1.56.3
 	google.golang.org/protobuf v1.31.0
+	ttuser/config-client v0.0.0
 	ttuser/pkg v0.0.0
 )
+
+replace ttuser/config-client => ../config-client
 
 replace ttuser/pkg => ../pkg
 

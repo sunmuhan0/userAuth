@@ -5,10 +5,14 @@ go 1.18
 require (
 	github.com/apache/rocketmq-client-go/v2 v2.1.2
 	github.com/teou/implmap v0.0.0-20220223051011-e99c668c6344
+	ttuser/config-client v0.0.0
 	ttuser/pkg v0.0.0
 )
 
-replace ttuser/pkg => ../pkg
+replace (
+	ttuser/config-client => ../config-client
+	ttuser/pkg => ../pkg
+)
 
 require (
 	github.com/emirpasic/gods v1.12.0 // indirect

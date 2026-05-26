@@ -43,9 +43,11 @@ require (
 	google.golang.org/grpc v1.56.3 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	ttuser/config-client v0.0.0 // indirect
 )
 
 replace (
 	ttuser/auth-client => ../auth-client
+	ttuser/config-client => ../config-client
 	ttuser/pkg => ../pkg
 )

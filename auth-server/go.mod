@@ -9,6 +9,7 @@ require (
 	golang.org/x/crypto v0.14.0
 	google.golang.org/grpc v1.56.3
 	ttuser/auth-client v0.0.0
+	ttuser/config-client v0.0.0
 	ttuser/data-store v0.0.0
 	ttuser/event-producer v0.0.0
 	ttuser/pkg v0.0.0
@@ -46,6 +47,7 @@ require (
 
 replace (
 	ttuser/auth-client => ../auth-client
+	ttuser/config-client => ../config-client
 	ttuser/data-store => ../data-store
 	ttuser/event-producer => ../event-producer
 	ttuser/pkg => ../pkg

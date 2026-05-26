@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	pb "ttuser/auth-client/auth"
+	configclient "ttuser/config-client/client"
 	"ttuser/pkg/trace"
 )
 
@@ -45,8 +46,24 @@ func (c *AuthClient) Close() {
 }
 
 func (c *AuthClient) init() error {
-	addr := defaultAddr     // TODO: 后续从配置中心获取
-	caCert := defaultCACert // TODO: 后续从配置中心获取
+	addr := defaultAddr
+	caCert := defaultCACert
+
+	// 尝试从配置中心获取
+	cfg := configclient.DefaultConfig()
+	cfg.ServiceName = "proc"
+	cc := configclient.New(cfg)
+	if err := cc.Start(0); err == nil {
+		var authConf struct {
+			Addr   string `json:"addr"`
+			CACert string `json:"ca_cert"`
+		}
+		if err := cc.Get("auth-client", &authConf); err == nil {
+			addr = authConf.Addr
+			caCert = authConf.CACert
+			fmt.Println("[AuthClient] config loaded from config-center")
+		}
+	}
 
 	// 加载 CA 证书用于验证服务端
 	creds, err := credentials.NewClientTLSFromFile(caCert, "localhost")
