@@ -60,7 +60,8 @@ ttuser/
 │   ├── log/                  # zap 日志封装（日志轮转）
 │   ├── crypto/               # AES-256-GCM 加解密
 │   ├── metrics/              # Prometheus 指标
-│   └── nacos/                # Nacos 服务注册发现封装
+│   ├── nacos/                # Nacos 服务注册发现封装
+│   └── http/                 # HTTP 服务端/客户端封装（内置日志、trace、metrics）
 │
 ├── proc/                     # HTTP 网关（Gin）
 │   ├── cmd/server/main.go    # 入口（CLI 参数 -name -port -env）
@@ -94,6 +95,45 @@ ttuser/
 | 监控 | Prometheus |
 | 配置/密码加密 | AES-256-GCM / bcrypt |
 | 服务注册发现 | Nacos（nacos-sdk-go/v2） |
+
+## pkg/http 公共 HTTP 封装
+
+### 服务端
+
+封装 Gin，内置 Trace / AccessLog / Metrics 中间件 + `/metrics` 端点，支持优雅关闭。
+
+```go
+srv := http.New(http.ServerConfig{Name: "myapp", Port: 8080})
+srv.Engine().GET("/ping", func(c *gin.Context) { c.String(200, "pong") })
+srv.Engine().POST("/api/v1/users", handler)
+srv.Start()
+http.GracefulStop(srv, 10*time.Second)
+```
+
+每条请求自动记录日志（path、method、耗时、状态码、请求/响应体、trace_id），按状态码分级：≥500→Error，≥400→Warn，其余→Info。
+
+### 客户端
+
+支持 GET / POST / PUT / DELETE / PATCH，每次请求自动记录日志。
+
+```go
+cli := http.NewClient()
+
+type SMSReq struct {
+    Phone    string `json:"phone"`
+    Template string `json:"template"`
+    Params   string `json:"params"`
+}
+
+resp, err := cli.Post(ctx, "https://sms.api/send",
+    SMSReq{Phone: "138xxxx", Template: "verify", Params: `{"code":"1234"}`},
+    http.WithBearerToken("sk-xxx"),
+)
+if err != nil { return err }
+
+var result struct { Code string `json:"code"` }
+resp.JSON(&result)
+```
 
 ## 服务注册发现（Nacos）
 
