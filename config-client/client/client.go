@@ -16,13 +16,15 @@ type Config struct {
 	Env         string // 当前环境，如 prod/staging/preview
 	ServiceName string // 当前服务名，如 auth-server
 	Token       string // 认证 token
+	ConfigDir   string // 配置文件本地目录，默认 ./config
 }
 
 // DefaultConfig 默认配置
 func DefaultConfig() *Config {
 	return &Config{
-		Endpoint: "http://127.0.0.1:7963",
-		Token:    "ttuser-config-token-2024",
+		Endpoint:  "http://127.0.0.1:7963",
+		Token:     "ttuser-config-token-2024",
+		ConfigDir: "./config",
 	}
 }
 
@@ -31,6 +33,7 @@ type ConfigClient struct {
 	endpoint    string
 	env         string
 	serviceName string
+	configDir   string
 	token       string
 	httpClient  *http.Client
 }
@@ -45,16 +48,21 @@ func New(cfg *Config) *ConfigClient {
 	if token == "" {
 		token = DefaultConfig().Token
 	}
+	configDir := cfg.ConfigDir
+	if configDir == "" {
+		configDir = DefaultConfig().ConfigDir
+	}
 	return &ConfigClient{
 		endpoint:    endpoint,
 		env:         cfg.Env,
 		serviceName: cfg.ServiceName,
+		configDir:   configDir,
 		token:       token,
 		httpClient:  &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
-// FetchConfigs 从 config-server 下载所有配置文件到 /home/work/config/{serviceName}/
+// FetchConfigs 从 config-server 下载所有配置文件到 {configDir}/{serviceName}/
 func (c *ConfigClient) FetchConfigs() error {
 	if c.env == "" || c.serviceName == "" {
 		return fmt.Errorf("env and serviceName are required")
@@ -99,7 +107,7 @@ func (c *ConfigClient) FetchConfigs() error {
 		return fmt.Errorf("config-server error: code=%d", result.Code)
 	}
 
-	localDir := filepath.Join("/home/work/config", c.serviceName)
+	localDir := filepath.Join(c.configDir, c.serviceName)
 	if err := os.MkdirAll(localDir, 0755); err != nil {
 		return fmt.Errorf("create local dir %s failed: %w", localDir, err)
 	}
@@ -115,16 +123,17 @@ func (c *ConfigClient) FetchConfigs() error {
 	return nil
 }
 
-// LoadFile 读取 /home/work/config/{serviceName}/{filename} 并反序列化
+// LoadFile 读取配置文件并反序列化
 // target 必须是指针类型
 func LoadFile(serviceName, filename string, target interface{}) error {
-	fp := filepath.Join("/home/work/config", serviceName, filename)
+	// 路径 ./config
+	fp := filepath.Join(DefaultConfig().ConfigDir, serviceName, filename)
 	data, err := os.ReadFile(fp)
-	if err != nil {
-		return fmt.Errorf("read config file %s failed: %w", fp, err)
+	if err == nil {
+		if err := json.Unmarshal(data, target); err == nil {
+			return nil
+		}
 	}
-	if err := json.Unmarshal(data, target); err != nil {
-		return fmt.Errorf("unmarshal config file %s failed: %w", fp, err)
-	}
-	return nil
+
+	return fmt.Errorf("read config file %s/%s failed", serviceName, filename)
 }

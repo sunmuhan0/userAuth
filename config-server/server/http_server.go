@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/teou/inji"
 
 	"ttuser/config-server/internal/service"
 	"ttuser/pkg/log"
@@ -21,6 +20,7 @@ const (
 // HTTPServer 配置中心HTTP服务
 type HTTPServer struct {
 	ConfigService *service.ConfigService `inject:"configService"`
+	Port          int
 	engine        *gin.Engine
 	httpServer    *http.Server
 }
@@ -33,19 +33,15 @@ func getConfigToken() string {
 	return token
 }
 
-// Start 实现 inji.Startable
+// Start 启动HTTP服务（由外部main.go显式调用）
 func (s *HTTPServer) Start() error {
 	s.engine = gin.New()
 	s.engine.Use(gin.Recovery())
 	s.setupRoutes()
 
-	port := defaultPort
-	if v, ok := inji.Find("serverPort"); ok {
-		if vStr, ok := v.(string); ok {
-			if p, err := fmt.Sscanf(vStr, "%d", &port); err != nil || p != 1 {
-				port = defaultPort
-			}
-		}
+	port := s.Port
+	if port == 0 {
+		port = defaultPort
 	}
 
 	s.httpServer = &http.Server{

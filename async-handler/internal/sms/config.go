@@ -3,16 +3,15 @@ package sms
 import (
 	"fmt"
 
-	"github.com/teou/inji"
-
 	configclient "ttuser/config-client/client"
 )
 
 type Config struct {
-	APIKey    string
-	APISecret string
-	SignName  string
-	Template  string
+	ServiceName string `inject:"serverName"`
+	APIKey      string
+	APISecret   string
+	SignName    string
+	Template    string
 }
 
 func (c *Config) Start() error {
@@ -22,9 +21,9 @@ func (c *Config) Start() error {
 		SignName  string `json:"sign_name"`
 		Template  string `json:"template"`
 	}
-	svc := "async-handler"
-	if v, ok := inji.Find("serverName"); ok {
-		svc = v.(string)
+	svc := c.ServiceName
+	if svc == "" {
+		return fmt.Errorf("[smsConfig] ServiceName is empty, verify inject tag")
 	}
 	if err := configclient.LoadFile(svc, "sms.json", &smsConf); err != nil {
 		return fmt.Errorf("[smsConfig] load sms config failed: %w", err)

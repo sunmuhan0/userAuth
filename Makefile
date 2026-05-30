@@ -1,16 +1,32 @@
-.PHONY: build build-auth-server build-proc build-async-handler build-config-server test unit-test e2e-test clean proto install deploy stop status vet fmt tidy
+.PHONY: build build-auth-server build-proc build-async-handler build-config-server test unit-test e2e-test clean proto install deploy stop status vet fmt tidy dev stop-dev docker-up docker-down
 
 # ==================== 配置 ====================
 BIN_DIR := ./bin
-LOG_DIR := /home/work/log
-INSTALL_DIR := /home/work/ttuser
+LOG_DIR := ./log
+INSTALL_DIR := ./ttuser
 
 # 服务配置
 AUTH_SERVER_PORT := 9090
 PROC_PORT := 8080
 CONFIG_SERVER_PORT := 7963
+DEV_AUTH_PORT := 9091
 
 BUILD_FLAGS := -ldflags="-s -w" -trimpath
+
+# ==================== Docker 依赖 ====================
+docker-up:
+	@echo "[docker] starting MySQL..."
+	@docker rm -f mysql 2>/dev/null; docker run -d --name mysql -e MYSQL_ROOT_PASSWORD=123456 -e MYSQL_DATABASE=ttuser -p 3306:3306 mysql:8.0 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci >/dev/null
+	@sleep 8
+	@echo "[docker] starting Nacos..."
+	@docker rm -f nacos 2>/dev/null; docker run -d --name nacos -p 8848:8848 -p 9848:9848 -e MODE=standalone nacos/nacos-server:v2.3.2 >/dev/null
+	@sleep 10
+	@echo "[docker] MySQL + Nacos ready"
+
+docker-down:
+	@echo "[docker] stopping..."
+	@-docker rm -f mysql nacos 2>/dev/null
+	@echo "[docker] done"
 
 # ==================== 编译 ====================
 build: build-auth-server build-proc build-async-handler build-config-server
@@ -124,7 +140,7 @@ e2e-test: build
 	@echo "[e2e] make sure mysql credentials are configured in ~/.my.cnf"
 	@mysql ttuser -e "TRUNCATE TABLE users; TRUNCATE TABLE token_blacklist;" 2>/dev/null || true
 	@echo "[e2e] starting config-server..."
-	@cd config-server && nohup ../$(BIN_DIR)/config-server -name=config-server -port=7963 -env=test > /dev/null 2>&1 & echo $$! > /tmp/e2e_config_server.pid
+	@cd config-server && nohup ../$(BIN_DIR)/config-server -name=config-server -port=7963 -env=test --config-dir=config-server/config-center > /dev/null 2>&1 & echo $$! > /tmp/e2e_config_server.pid
 	@sleep 1
 	@echo "[e2e] starting auth-server..."
 	@cd auth-server && nohup ../$(BIN_DIR)/auth-server -name=auth-server -port=9090 -env=test > /dev/null 2>&1 & echo $$! > /tmp/e2e_auth_server.pid
@@ -139,7 +155,40 @@ e2e-test: build
 		kill $$(cat /tmp/e2e_proc.pid) 2>/dev/null; \
 		kill $$(cat /tmp/e2e_auth_server.pid) 2>/dev/null; \
 		rm -f /tmp/e2e_config_server.pid /tmp/e2e_proc.pid /tmp/e2e_auth_server.pid; \
+		rm -rf ./config; \
 		exit $$EXIT_CODE
+
+# ==================== 开发环境启动（Linux/Mac/WSL） ====================
+dev: build
+	@echo "[dev] starting development environment..."
+	@mkdir -p $(LOG_DIR)
+	@echo "[dev] starting config-server on :$(CONFIG_SERVER_PORT)..."
+	@SERVICE_NAME=config-server SERVICE_PORT=$(CONFIG_SERVER_PORT) ENV=staging \
+		nohup $(BIN_DIR)/config-server -name=config-server -port=$(CONFIG_SERVER_PORT) -env=staging -config-dir=config-server/config-center > $(LOG_DIR)/config-server.log 2>&1 & echo $$! > /tmp/ttuser_dev_config_server.pid
+	@sleep 3
+	@echo "[dev] starting auth-server on :$(DEV_AUTH_PORT)..."
+	@SERVICE_NAME=auth-server SERVICE_PORT=$(DEV_AUTH_PORT) ENV=staging \
+		nohup $(BIN_DIR)/auth-server -name=auth-server -port=$(DEV_AUTH_PORT) -env=staging > $(LOG_DIR)/auth-server.log 2>&1 & echo $$! > /tmp/ttuser_dev_auth_server.pid
+	@sleep 4
+	@echo "[dev] starting proc on :$(PROC_PORT)..."
+	@SERVICE_NAME=proc SERVICE_PORT=$(PROC_PORT) ENV=staging \
+		nohup $(BIN_DIR)/proc -name=proc -port=$(PROC_PORT) -env=staging > $(LOG_DIR)/proc.log 2>&1 & echo $$! > /tmp/ttuser_dev_proc.pid
+	@sleep 2
+	@echo "[dev] all services started."
+	@echo "  config-server  http://127.0.0.1:$(CONFIG_SERVER_PORT)"
+	@echo "  auth-server    grpc://127.0.0.1:$(DEV_AUTH_PORT)  metrics http://127.0.0.1:$(shell echo $$(($(DEV_AUTH_PORT)+100)))"
+	@echo "  proc           http://127.0.0.1:$(PROC_PORT)"
+	@echo "  logs: $(LOG_DIR)/"
+	@echo "  Stop with: make stop-dev"
+
+stop-dev:
+	@echo "[stop-dev] stopping..."
+	@-kill $$(cat /tmp/ttuser_dev_config_server.pid) 2>/dev/null && echo "  config-server stopped" || true
+	@-kill $$(cat /tmp/ttuser_dev_auth_server.pid) 2>/dev/null && echo "  auth-server stopped" || true
+	@-kill $$(cat /tmp/ttuser_dev_proc.pid) 2>/dev/null && echo "  proc stopped" || true
+	@rm -f /tmp/ttuser_dev_*.pid
+	@rm -rf ./config
+	@echo "[stop-dev] done."
 
 # ==================== 工具 ====================
 proto:
@@ -147,5 +196,5 @@ proto:
 	@cd auth-client/proto && bash gen.sh
 
 clean:
-	@rm -rf $(BIN_DIR)
+	@rm -rf $(BIN_DIR) ./config
 	@echo "[clean] done"

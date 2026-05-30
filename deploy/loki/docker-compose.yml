@@ -14,11 +14,20 @@ services:
       - ./loki-config.yml:/etc/loki/local-config.yaml
     command: -config.file=/etc/loki/local-config.yaml
 
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   promtail:
     image: grafana/promtail:2.9.0
     volumes:
       - ./promtail-config.yml:/etc/promtail/config.yml
-      - /home/work/log:/home/work/log          # ttuser服务日志目录
+      - ./logs:/home/work/log          # ttuser服务日志目录
     command: -config.file=/etc/promtail/config.yml
     depends_on:
       - loki

@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"fmt"
 
-	"github.com/teou/inji"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -29,7 +28,8 @@ type IAuthServiceClient struct {
 // 内嵌 IAuthServiceClient，外部可直接调用 Login/Logout/RefreshToken 等方法
 // 实现 inji.Startable / inji.Closeable 接口，支持自动注册
 type AuthClient struct {
-	conn *grpc.ClientConn
+	conn        *grpc.ClientConn
+	ServiceName string `inject:"serverName"`
 	IAuthServiceClient
 }
 
@@ -50,17 +50,24 @@ func (c *AuthClient) init() error {
 		Addr   string `json:"addr"`
 		CACert string `json:"ca_cert"`
 	}
-	svc := "proc"
-	if v, ok := inji.Find("serverName"); ok {
-		svc = v.(string)
+	svc := c.ServiceName
+	if svc == "" {
+		return fmt.Errorf("[AuthClient] ServiceName is empty, verify inject tag")
 	}
 	if err := configclient.LoadFile(svc, "auth-client.json", &authConf); err != nil {
 		return fmt.Errorf("[AuthClient] load auth-client config failed: %w", err)
 	}
 
 	cp := x509.NewCertPool()
-	cp.AppendCertsFromPEM([]byte(authConf.CACert))
-	creds := credentials.NewClientTLSFromCert(cp, "localhost")
+	ok := cp.AppendCertsFromPEM([]byte(authConf.CACert))
+	var opts []grpc.DialOption
+	if ok {
+		creds := credentials.NewClientTLSFromCert(cp, "localhost")
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	} else {
+		fmt.Println("[AuthClient] WARNING: no CA cert, using insecure connection")
+		opts = append(opts, grpc.WithInsecure())
+	}
 
 	// 优先通过 Nacos 发现 auth-server 地址
 	addr := authConf.Addr
@@ -71,11 +78,9 @@ func (c *AuthClient) init() error {
 	if addr == "" {
 		addr = defaultAddr
 	}
+	opts = append(opts, grpc.WithUnaryInterceptor(unaryClientTraceInterceptor))
 
-	conn, err := grpc.Dial(addr,
-		grpc.WithTransportCredentials(creds),
-		grpc.WithUnaryInterceptor(unaryClientTraceInterceptor),
-	)
+	conn, err := grpc.Dial(addr, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to connect to auth-server at %s: %w", addr, err)
 	}

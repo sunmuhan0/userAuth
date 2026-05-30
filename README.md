@@ -78,6 +78,11 @@ ttuser/
 │   │   ├── mysql.go          # BaseMysqlClient
 │   │   └── proc.go           # ProcMysqlClient（DSN 从配置中心加载）
 │   └── ddl/                  # 数据库 DDL
+│
+├── dev.ps1                   # Windows 一键启动脚本
+├── Makefile                  # 构建 & 开发（Linux/WSL）
+└── deploy/                   # Docker Compose 部署配置
+    └── loki/                 # Loki + Prometheus + Grafana
 ```
 
 ## 技术栈
@@ -220,13 +225,13 @@ auth-client (proc 内)
 CLI 参数 -name -port -env
    → inji 注册 serverName/serverPort/env
      → log.Init(nil)
-       → FetchConfigs() 下载到 /home/work/config/{serviceName}/
+       → FetchConfigs() 下载到 ./config/{serviceName}/
          → sp.Init()（各组件从本地文件读取配置）
            → Nacos 注册（auth-server）/ 发现（auth-client）
 ```
 
 - 配置获取失败直接报错，**无降级默认值**
-- 服务名通过 `inji.Find("serverName")` 注入，各包不硬编码
+- 服务名通过 `inject:"serverName"` 字段注入
 - 证书以 PEM 字符串存储在 JSON 中，`tls.X509KeyPair`/`x509.CertPool` 加载
 
 ### 支持的配置文件
@@ -259,90 +264,120 @@ CLI 参数 -name -port -env
 | `MYSQL_MAX_OPEN_CONNS` | 最大连接数 | 100 |
 | `MYSQL_MAX_IDLE_CONNS` | 最大空闲连接 | 10 |
 | `MYSQL_CONN_MAX_LIFETIME` | 连接最大存活（秒） | 3600 |
+| `NACOS_DISABLE` | 设为 `true` 跳过 Nacos 注册/发现 | 空 |
 
-## 快速开始
+## 本地开发
 
-### 1. 环境准备
+### Docker 依赖
 
-Go 1.21+, MySQL 8.0+, RocketMQ 4.x+, OpenSSL, Nacos 2.x
-
-### 2. 初始化数据库
+本地开发需要以下 Docker 容器：
 
 ```bash
-mysql -u root -p123456 -e "CREATE DATABASE IF NOT EXISTS ttuser"
-mysql -u root -p123456 ttuser < data-store/ddl/001_create_users.sql
-mysql -u root -p123456 ttuser < data-store/ddl/002_create_token_blacklist.sql
+# MySQL
+docker run -d --name mysql -e MYSQL_ROOT_PASSWORD=123456 -e MYSQL_DATABASE=ttuser \
+  -p 3306:3306 mysql:8.0 \
+  --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+# Nacos
+docker run -d --name nacos -p 8848:8848 -p 9848:9848 -e MODE=standalone \
+  nacos/nacos-server:v2.3.2
 ```
 
-### 3. 生成 TLS 证书
-
-在项目根目录执行：
+### 初始化数据库
 
 ```bash
+docker exec -i mysql mysql -u root -p123456 ttuser < data-store/ddl/001_create_users.sql
+docker exec -i mysql mysql -u root -p123456 ttuser < data-store/ddl/002_create_token_blacklist.sql
+```
+
+### 启动服务
+
+**Windows（dev.ps1）：**
+
+```powershell
+.\dev.ps1                     # 默认 staging 环境，auth-server :9091
+.\dev.ps1 -AuthPort 9090      # 指定端口
+```
+
+**Linux/WSL（Makefile）：**
+
+```bash
+make dev        # 构建并启动（staging 环境）
+make stop-dev   # 停止所有服务
+```
+
+> 说明：
+> - Docker Desktop for Windows 的 wslrelay 占用 9090 端口，故开发环境 auth-server 默认使用 9091
+> - 每个服务额外开 `port+100` 的 HTTP 端口暴露 `/metrics` 和 `/healthz`
+> - 日志统一输出到 `./log/` 目录
+> - 配置从配置中心下载到 `./config/{serviceName}/` 目录
+
+### 生成 TLS 证书
+
+如果证书过期或需要重新生成，在项目根目录执行：
+
+```bash
+docker run --rm -v "$(pwd)/config-server/config-center:/config" golang:1.22 \
+  go run /config/generate_cert.go
+```
+
+或者使用以下 OpenSSL 脚本后，将 PEM 内容写入对应环境的 `certs.json` 和 `auth-client.json`（注意 JSON 中的换行符需转义为 `\n`）：
+
+```bash
+cat > gen_cert.sh <<'SCRIPT'
 #!/bin/bash
 set -e
-cd "$(dirname "$0")"
-
-# 生成 CA
 openssl req -x509 -newkey rsa:4096 -days 3650 -nodes \
   -keyout ca-key.pem -out ca.pem \
   -subj "/C=CN/ST=Shanghai/L=Shanghai/O=TTUser/CN=TTUser CA"
-
-# 生成服务端私钥
 openssl genrsa -out server-key.pem 4096
-
-# 生成 CSR
 openssl req -new -key server-key.pem -out server.csr \
   -subj "/C=CN/ST=Shanghai/L=Shanghai/O=TTUser/CN=localhost"
-
-# 创建扩展文件（支持 SAN）
 cat > server-ext.cnf <<EOF
 authorityKeyIdentifier=keyid,issuer
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment
 subjectAltName=@alt_names
-
 [alt_names]
 DNS.1=localhost
 IP.1=127.0.0.1
 IP.2=0.0.0.0
 EOF
-
-# 用 CA 签发服务端证书
 openssl x509 -req -in server.csr -CA ca.pem -CAkey ca-key.pem \
   -CAcreateserial -out server.pem -days 3650 -extfile server-ext.cnf
-
-# 清理中间文件
 rm -f server.csr server-ext.cnf ca-key.pem ca.srl
-
-# 读取 PEM 内容，更新 config-center 各环境 auth-server/certs.json
-echo "ca.pem:"
+echo "CA cert:"
 cat ca.pem
-echo ""
-echo "server.pem:"
+echo "Server cert:"
 cat server.pem
-echo ""
-echo "server-key.pem:"
+echo "Server key:"
 cat server-key.pem
+SCRIPT
+bash gen_cert.sh
 ```
 
-### 4. 启动
+### 手动启动（不依赖脚本）
 
 ```bash
 # 配置中心
-cd config-server && go run ./cmd/server/ -name=config-server -port=7963 -env=prod
+cd config-server && go run ./cmd/server/ \
+  -name=config-server -port=7963 -env=staging \
+  --config-dir=config-server/config-center
 
-# auth-server
-cd auth-server && go run ./cmd/server/ -name=auth-server -port=9090 -env=prod
+# auth-server（启动后自动注册到 Nacos）
+cd auth-server && go run ./cmd/server/ \
+  -name=auth-server -port=9091 -env=staging
 
-# proc
-cd proc && go run ./cmd/server/ -name=proc -port=8080 -env=prod
+# proc（从 Nacos 发现 auth-server，降级到 auth-client.json）
+cd proc && go run ./cmd/server/ \
+  -name=proc -port=8080 -env=staging
 
 # async-handler
-cd async-handler && go run ./cmd/server/ -name=async-handler -port=0 -env=prod
+cd async-handler && go run ./cmd/server/ \
+  -name=async-handler -port=0 -env=prod
 ```
 
-### 5. 测试
+### 测试
 
 ```bash
 cd auth-server && go test ./...

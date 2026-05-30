@@ -10,7 +10,6 @@ import (
 	"ttuser/auth-server/internal/dao"
 	"ttuser/auth-server/internal/model"
 	"ttuser/auth-server/pkg/token"
-	"ttuser/event-producer/producer"
 	"ttuser/pkg/log"
 )
 
@@ -26,10 +25,9 @@ var (
 
 // AuthServiceImpl 认证服务实现
 type AuthServiceImpl struct {
-	UserDAO        *dao.UserDAO           `inject:"userDAO"`
-	TokenDAO       *dao.TokenDAO          `inject:"tokenDAO"`
-	TokenMgr       *token.JWTManager      `inject:"tokenManager"`
-	EventPublisher producer.IRmqPublisher `inject:"eventPublisher"`
+	UserDAO  *dao.UserDAO      `inject:"userDAO"`
+	TokenDAO *dao.TokenDAO     `inject:"tokenDAO"`
+	TokenMgr *token.JWTManager `inject:"tokenManager"`
 }
 
 // Register 用户注册
@@ -60,20 +58,6 @@ func (s *AuthServiceImpl) Register(ctx context.Context, username, password, nick
 			return nil, ErrUserAlreadyExists
 		}
 		return nil, err
-	}
-
-	// 发布用户注册事件到RocketMQ，通知下游服务（短信、邮件等）
-	if s.EventPublisher != nil {
-		payload := &UserRegisteredPayload{
-			UserID:   record.ID,
-			Username: record.Username,
-			Phone:    "", // TODO: 后续扩展用户注册时传入手机号
-			Email:    record.Email,
-			Nickname: record.Nickname,
-		}
-		if err := s.EventPublisher.Publish(ctx, TopicUser, TagUserRegistered, payload); err != nil {
-			log.Warn(ctx, "failed to publish user registered event", "error", err)
-		}
 	}
 
 	return recordToUser(record), nil

@@ -56,7 +56,7 @@ require (
 	github.com/prometheus/client_model v0.4.0 // indirect
 	github.com/prometheus/common v0.44.0 // indirect
 	github.com/prometheus/procfs v0.11.1 // indirect
-	github.com/teou/implmap v0.0.0-20181215111212-373d77bc2b63 // indirect
+	github.com/teou/implmap v0.0.0-20220223051011-e99c668c6344 // indirect
 	github.com/teou/ordered_map v1.0.0 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	go.uber.org/atomic v1.10.0 // indirect

@@ -29,6 +29,11 @@ type EventRMQPublisher struct {
 
 // Start 实现 inji.Startable 接口，创建并启动RocketMQ producer
 func (p *EventRMQPublisher) Start() error {
+	if p.Config == nil || p.Config.NameServer == "" {
+		fmt.Println("[event-producer] skipped: no name server configured")
+		return nil
+	}
+
 	var err error
 	p.producer, err = rocketmq.NewProducer(
 		rmqproducer.WithNameServer([]string{p.Config.NameServer}),

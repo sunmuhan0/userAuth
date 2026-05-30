@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/teou/inji"
 
 	configclient "ttuser/config-client/client"
 )
@@ -30,6 +29,7 @@ type Claims struct {
 }
 
 type JWTManager struct {
+	ServiceName       string `inject:"serverName"`
 	Secret            string
 	AccessExpireTime  time.Duration
 	RefreshExpireTime time.Duration
@@ -45,9 +45,9 @@ func (m *JWTManager) init() error {
 		AccessExpire  string `json:"access_expire"`
 		RefreshExpire string `json:"refresh_expire"`
 	}
-	svc := "auth-server"
-	if v, ok := inji.Find("serverName"); ok {
-		svc = v.(string)
+	svc := m.ServiceName
+	if svc == "" {
+		return fmt.Errorf("[JWTManager] ServiceName is empty, verify inject tag")
 	}
 	if err := configclient.LoadFile(svc, "jwt.json", &jwtConf); err != nil {
 		return fmt.Errorf("[JWTManager] load jwt config failed: %w", err)

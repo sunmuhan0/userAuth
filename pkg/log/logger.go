@@ -26,7 +26,7 @@ func init() {
 type LogConfig struct {
 	ServiceName string // 服务名，如 "auth-server"
 	Port        int    // 服务端口，如 9090
-	LogDir      string // 日志根目录，默认 /home/work/log
+	LogDir      string // 日志根目录，默认 ./log
 }
 
 // DefaultLogConfig 默认日志配置，从 inji 容器获取服务名和端口
@@ -55,7 +55,7 @@ func DefaultLogConfig() *LogConfig {
 	return &LogConfig{
 		ServiceName: svc,
 		Port:        port,
-		LogDir:      "/home/work/log",
+		LogDir:      "./log",
 	}
 }
 

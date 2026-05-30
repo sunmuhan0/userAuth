@@ -5,7 +5,6 @@ import (
 	"reflect"
 
 	"github.com/teou/implmap"
-	"github.com/teou/inji"
 
 	configclient "ttuser/config-client/client"
 )
@@ -16,15 +15,11 @@ func init() {
 
 type ProcMysqlClient struct {
 	BaseMysqlClient
+	ServiceName string `inject:"serverName"`
 }
 
 func (c *ProcMysqlClient) Start() error {
-	svc := "auth-server"
-	if v, ok := inji.Find("serverName"); ok {
-		if name, ok := v.(string); ok {
-			svc = name
-		}
-	}
+	svc := c.ServiceName
 	var mysqlConf struct {
 		DSN string `json:"dsn"`
 	}

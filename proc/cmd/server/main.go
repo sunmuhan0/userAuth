@@ -28,6 +28,9 @@ func main() {
 	inji.InitDefault()
 
 	// ========== 注册服务标识与运行环境 ==========
+	os.Setenv("SERVICE_NAME", *name)
+	os.Setenv("SERVICE_PORT", fmt.Sprintf("%d", *port))
+	os.Setenv("ENV", *env)
 	inji.Reg("serverName", *name)
 	inji.Reg("serverPort", fmt.Sprintf("%d", *port))
 	inji.Reg("env", *env)
@@ -35,9 +38,7 @@ func main() {
 	// ========== 初始化日志 ==========
 	log.Init(nil)
 	defer func() {
-		if err := log.Sync(); err != nil {
-			fmt.Printf("[proc] log sync error: %v\n", err)
-		}
+		log.Sync()
 	}()
 
 	// ========== 从配置中心拉取配置文件 ==========
@@ -99,9 +100,7 @@ func main() {
 	}
 
 	// 关闭依赖注入容器
-	if err := inji.Close(); err != nil {
-		fmt.Printf("[proc] inji close error: %v\n", err)
-	}
+	inji.Close()
 
 	fmt.Println("[proc] stopped")
 }

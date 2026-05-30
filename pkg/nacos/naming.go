@@ -3,6 +3,7 @@ package nacos
 import (
 	"fmt"
 	"net"
+	"os"
 	"reflect"
 
 	configclient "ttuser/config-client/client"
@@ -12,7 +13,6 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/v2/common/constant"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 	"github.com/teou/implmap"
-	"github.com/teou/inji"
 )
 
 func init() {
@@ -39,6 +39,8 @@ type Registry struct {
 	serviceName string
 	ip          string
 	port        uint64
+	ServerName  string `inject:"serverName"`
+	PortStr     string `inject:"serverPort"`
 }
 
 func (r *Registry) Start() error {
@@ -84,22 +86,31 @@ func (r *Registry) Close() {
 }
 
 func (r *Registry) initLazy() error {
-	sv, ok := inji.Find("serverName")
-	if !ok {
-		return fmt.Errorf("serverName not found in DI container")
+	if os.Getenv("NACOS_DISABLE") == "true" {
+		fmt.Println("[nacos] skip registration (NACOS_DISABLE=true)")
+		return nil
 	}
-	serviceName := sv.(string)
+
+	serviceName := r.ServerName
+	if serviceName == "" {
+		return fmt.Errorf("serverName not injected")
+	}
 
 	ip := getLocalIP()
 
 	port := uint64(9090)
-	if pv, ok := inji.Find("serverPort"); ok {
-		fmt.Sscanf(fmt.Sprintf("%v", pv), "%d", &port)
+	if r.PortStr != "" {
+		fmt.Sscanf(r.PortStr, "%d", &port)
 	}
 
 	var cfg Config
 	if err := configclient.LoadFile(serviceName, "nacos.json", &cfg); err != nil {
-		return fmt.Errorf("load nacos config failed: %w", err)
+		fmt.Printf("[nacos] skip registration (no config): %v\n", err)
+		return nil
+	}
+	if cfg.ServerAddr == "" || cfg.ServerPort == 0 {
+		fmt.Println("[nacos] skip registration (server_addr empty)")
+		return nil
 	}
 	client, err := newNamingClient(&cfg)
 	if err != nil {
@@ -126,6 +137,9 @@ func getLocalIP() string {
 }
 
 func Discover(myServiceName, targetServiceName string) (string, error) {
+	if os.Getenv("NACOS_DISABLE") == "true" {
+		return "", fmt.Errorf("nacos disabled")
+	}
 	var cfg Config
 	if err := configclient.LoadFile(myServiceName, "nacos.json", &cfg); err != nil {
 		return "", fmt.Errorf("load nacos config failed: %w", err)

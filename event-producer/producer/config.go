@@ -3,16 +3,15 @@ package producer
 import (
 	"fmt"
 
-	"github.com/teou/inji"
-
 	configclient "ttuser/config-client/client"
 )
 
 // RMQConfig RocketMQ生产者配置
 // Start时从配置中心获取
 type RMQConfig struct {
-	NameServer string
-	GroupName  string
+	ServiceName string `inject:"serverName"`
+	NameServer  string
+	GroupName   string
 }
 
 // Start 实现 inji.Startable 接口
@@ -21,9 +20,9 @@ func (c *RMQConfig) Start() error {
 		NameServer string `json:"name_server"`
 		GroupName  string `json:"group_name"`
 	}
-	svc := "event-producer"
-	if v, ok := inji.Find("serverName"); ok {
-		svc = v.(string)
+	svc := c.ServiceName
+	if svc == "" {
+		return fmt.Errorf("[rmqProducerConfig] ServiceName is empty, verify inject tag")
 	}
 	if err := configclient.LoadFile(svc, "rocketmq.json", &rmqConf); err != nil {
 		return fmt.Errorf("[rmqProducerConfig] load rocketmq config failed: %w", err)

@@ -5,9 +5,12 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/http"
 	"strconv"
 	"time"
 
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/teou/inji"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -20,8 +23,8 @@ import (
 	"ttuser/auth-server/internal/service"
 	"ttuser/auth-server/pkg/interceptor"
 	configclient "ttuser/config-client/client"
-	pnacos "ttuser/pkg/nacos"
 	"ttuser/pkg/log"
+	pnacos "ttuser/pkg/nacos"
 )
 
 const (
@@ -33,12 +36,14 @@ type AuthGRPCServer struct {
 	pb.UnimplementedAuthServiceServer
 	AuthService *service.AuthServiceImpl `inject:"authService"`
 	server      *grpc.Server
-	registrar   pnacos.IServiceRegistrar `inject:"serviceRegistrar"`
+	httpServer  *http.Server
+	Registrar   pnacos.IServiceRegistrar `inject:"serviceRegistrar"`
+	ServerName  string                   `inject:"serverName"`
 }
 
 // SetRegistrar 设置服务注册器
 func (s *AuthGRPCServer) SetRegistrar(r pnacos.IServiceRegistrar) {
-	s.registrar = r
+	s.Registrar = r
 }
 
 // Run 启动gRPC服务（带TLS）
@@ -58,12 +63,8 @@ func (s *AuthGRPCServer) Run() error {
 	}
 
 	// 从配置中心加载TLS证书
-	svc := "auth-server"
-	if v, ok := inji.Find("serverName"); ok {
-		if name, ok := v.(string); ok {
-			svc = name
-		}
-	}
+	svc := s.ServerName
+
 	var certsConf struct {
 		Cert string `json:"cert"`
 		Key  string `json:"key"`
@@ -71,35 +72,64 @@ func (s *AuthGRPCServer) Run() error {
 	if err := configclient.LoadFile(svc, "certs.json", &certsConf); err != nil {
 		return fmt.Errorf("failed to load certs config: %w", err)
 	}
-	certPair, err := tls.X509KeyPair([]byte(certsConf.Cert), []byte(certsConf.Key))
-	if err != nil {
-		return fmt.Errorf("failed to parse cert key pair: %w", err)
+	certPair, tlsErr := tls.X509KeyPair([]byte(certsConf.Cert), []byte(certsConf.Key))
+	if tlsErr != nil {
+		fmt.Printf("[auth-server] TLS cert error: %v, running without TLS\n", tlsErr)
 	}
-	creds := credentials.NewServerTLSFromCert(&certPair)
 
-	s.server = grpc.NewServer(
-		grpc.Creds(creds),
-		grpc.UnaryInterceptor(interceptor.UnaryServerTraceInterceptor()),
+	var grpcOpts []grpc.ServerOption
+	if tlsErr == nil {
+		creds := credentials.NewServerTLSFromCert(&certPair)
+		grpcOpts = append(grpcOpts, grpc.Creds(creds))
+	}
+
+	grpc_prometheus.EnableHandlingTimeHistogram()
+	grpcOpts = append(grpcOpts,
+		grpc.ChainUnaryInterceptor(
+			grpc_prometheus.UnaryServerInterceptor,
+			interceptor.UnaryServerTraceInterceptor(),
+		),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionIdle:     15 * time.Minute,
 			MaxConnectionAge:      30 * time.Minute,
 			MaxConnectionAgeGrace: 5 * time.Minute,
-			Time:    10 * time.Second,
-			Timeout: 5 * time.Second,
+			Time:                  10 * time.Second,
+			Timeout:               5 * time.Second,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             5 * time.Second,
 			PermitWithoutStream: true,
 		}),
-		grpc.MaxRecvMsgSize(4 * 1024 * 1024),
+		grpc.MaxRecvMsgSize(4*1024*1024),
 	)
+	s.server = grpc.NewServer(grpcOpts...)
+	grpc_prometheus.Register(s.server)
 	pb.RegisterAuthServiceServer(s.server, s)
 
-	if s.registrar != nil {
-		if err := s.registrar.Register(svc, port); err != nil {
+	if s.Registrar != nil {
+		if err := s.Registrar.Start(); err != nil {
 			fmt.Printf("[auth-server] failed to register service: %v\n", err)
 		}
 	}
+
+	// 启动HTTP metrics端口（gRPC port + 100）
+	httpPort := port + 100
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+	s.httpServer = &http.Server{
+		Addr:    fmt.Sprintf(":%d", httpPort),
+		Handler: mux,
+	}
+	go func() {
+		fmt.Printf("[auth-server] HTTP metrics listening on :%d\n", httpPort)
+		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("[auth-server] HTTP metrics server error: %v\n", err)
+		}
+	}()
 
 	fmt.Printf("[auth-server] gRPC listening on :%d (TLS)\n", port)
 	return s.server.Serve(lis)
@@ -110,10 +140,13 @@ func (s *AuthGRPCServer) Stop() {
 	if s.server != nil {
 		s.server.GracefulStop()
 	}
-	if s.registrar != nil {
-		if err := s.registrar.Deregister(); err != nil {
-			fmt.Printf("[auth-server] failed to deregister service: %v\n", err)
-		}
+	if s.httpServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.httpServer.Shutdown(ctx)
+	}
+	if s.Registrar != nil {
+		s.Registrar.Close()
 	}
 }
 

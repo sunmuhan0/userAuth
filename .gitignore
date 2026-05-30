@@ -1,5 +1,6 @@
 # 编译产物
 bin/
+build/
 *.exe
 *.exe~
 *.dll
@@ -31,7 +32,12 @@ Thumbs.db
 # 证书私钥（不提交）
 certs/*-key.pem
 
-# 临时文件
+# 运行时代码生成 & 缓存
+config/              # 配置中心下载到本地的配置
+nacos-log/           # Nacos SDK 日志
+nacos-cache/         # Nacos SDK 缓存
+
+# 临时&日志文件
 /tmp/
 *.log
 *.pid

@@ -53,7 +53,7 @@ func TestFetchConfigsWithMockServer(t *testing.T) {
 		t.Fatalf("FetchConfigs failed: %v", err)
 	}
 
-	writtenFile := filepath.Join("/home/work/config", "auth-server", "mysql.json")
+	writtenFile := filepath.Join("./config", "auth-server", "mysql.json")
 	if _, err := os.Stat(writtenFile); os.IsNotExist(err) {
 		t.Fatalf("expected file %s to exist", writtenFile)
 	}
@@ -71,7 +71,7 @@ func TestFetchConfigsWithMockServer(t *testing.T) {
 		t.Fatalf("expected DSN=root:@tcp(localhost:3306)/test, got %s", result.DSN)
 	}
 
-	os.RemoveAll("/home/work/config")
+	os.RemoveAll("./config")
 }
 
 func TestFetchConfigsServerError(t *testing.T) {
@@ -102,11 +102,11 @@ func TestFetchConfigsEmptyEnv(t *testing.T) {
 }
 
 func TestLoadFile(t *testing.T) {
-	configDir := filepath.Join("/home/work/config", "auth-server")
+	configDir := filepath.Join("./config", "auth-server")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Skipf("skipping: cannot create %s: %v", configDir, err)
 	}
-	defer os.RemoveAll("/home/work/config")
+	defer os.RemoveAll("./config")
 
 	content := `{"dsn":"root:@tcp(localhost:3306)/test"}`
 	if err := os.WriteFile(filepath.Join(configDir, "mysql.json"), []byte(content), 0644); err != nil {

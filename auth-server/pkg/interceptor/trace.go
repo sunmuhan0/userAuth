@@ -30,7 +30,7 @@ func UnaryServerTraceInterceptor() grpc.UnaryServerInterceptor {
 			ctx = trace.WithTraceID(ctx, trace.NewTraceID())
 		}
 
-		// 记录gRPC调用指标
+		// 记录gRPC调用指标（带service标签）
 		start := time.Now()
 		resp, err := handler(ctx, req)
 		duration := time.Since(start)

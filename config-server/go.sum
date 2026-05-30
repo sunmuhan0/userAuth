@@ -63,8 +63,9 @@ github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o
 github.com/stretchr/testify v1.8.2/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
 github.com/stretchr/testify v1.8.3 h1:RP3t2pwF7cMEbC1dqtB6poj3niw/9gnV4Cjg5oW5gtY=
 github.com/stretchr/testify v1.8.3/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
-github.com/teou/implmap v0.0.0-20181215111212-373d77bc2b63 h1:WjpidQ6BGiJqdHMd9cWHxIukhuV//NzLxXPmzPDNBfs=
 github.com/teou/implmap v0.0.0-20181215111212-373d77bc2b63/go.mod h1:Ekoq5rk8MC/wSS+tnlE/L2dejHhsi6f/jMK+CHDFAr0=
+github.com/teou/implmap v0.0.0-20220223051011-e99c668c6344 h1:9bzpXfsKtJGIunac5/zUn9DH4ZN92u7tn0p4WEXiEws=
+github.com/teou/implmap v0.0.0-20220223051011-e99c668c6344/go.mod h1:X4TKxbUhLhO5kNts/H0DT7na1MyQ0+1ughoz42ISOA0=
 github.com/teou/inji v1.1.2 h1:ceGnUaXqyBFtwYmeK8o/+4nBrgkkH2TisteYY+FP3Ro=
 github.com/teou/inji v1.1.2/go.mod h1:mfc3tXs+ZVgJTsVu5VYOdiw/QrByVGXlHQqc9W82KXA=
 github.com/teou/ordered_map v1.0.0 h1:fXFcdoXU49pnDHqFCSzuVUxqZ9efspDc8vkp3Ea+dgc=

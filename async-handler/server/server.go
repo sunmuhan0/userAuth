@@ -8,7 +8,6 @@ import (
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/consumer"
 	"github.com/apache/rocketmq-client-go/v2/primitive"
-	"github.com/teou/inji"
 
 	"ttuser/async-handler/biz/register"
 	"ttuser/async-handler/pkg/router"
@@ -19,7 +18,8 @@ import (
 // RMQConfig RocketMQ消费者配置
 // Start时从配置中心获取
 type RMQConfig struct {
-	NameServer string
+	ServiceName string `inject:"serverName"`
+	NameServer  string
 }
 
 // Start 实现 inji.Startable 接口
@@ -27,9 +27,9 @@ func (c *RMQConfig) Start() error {
 	var rmqConf struct {
 		NameServer string `json:"name_server"`
 	}
-	svc := "async-handler"
-	if v, ok := inji.Find("serverName"); ok {
-		svc = v.(string)
+	svc := c.ServiceName
+	if svc == "" {
+		return fmt.Errorf("[rmqConfig] ServiceName is empty, verify inject tag")
 	}
 	if err := configclient.LoadFile(svc, "rocketmq.json", &rmqConf); err != nil {
 		return fmt.Errorf("[rmqConfig] load rocketmq config failed: %w", err)
