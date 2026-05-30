@@ -15,8 +15,10 @@ const (
 )
 
 var (
-	// HTTPServerMetrics 记录HTTP请求指标
+	// HTTPServerMetrics 记录HTTP服务端请求指标
 	HTTPServerMetrics *httpServerCollectors
+	// HTTPClientMetrics 记录HTTP客户端请求指标（第三方API调用）
+	HTTPClientMetrics *httpClientCollectors
 	// GRPCServerMetrics 记录gRPC调用指标
 	GRPCServerMetrics *grpcServerCollectors
 )
@@ -25,6 +27,12 @@ type httpServerCollectors struct {
 	RequestCount   *prometheus.CounterVec
 	RequestDuration *prometheus.HistogramVec
 	ActiveRequests prometheus.Gauge
+}
+
+type httpClientCollectors struct {
+	RequestCount    *prometheus.CounterVec
+	RequestDuration *prometheus.HistogramVec
+	ActiveRequests  prometheus.Gauge
 }
 
 type grpcServerCollectors struct {
@@ -60,6 +68,33 @@ func init() {
 		),
 	}
 
+	HTTPClientMetrics = &httpClientCollectors{
+		RequestCount: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "http_client_requests_total",
+				Help:      "Total number of HTTP client requests",
+			},
+			[]string{"method", "host", "status"},
+		),
+		RequestDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: namespace,
+				Name:      "http_client_request_duration_seconds",
+				Help:      "HTTP client request duration in seconds",
+				Buckets:   []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+			},
+			[]string{"method", "host"},
+		),
+		ActiveRequests: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "http_client_requests_active",
+				Help:      "Number of active HTTP client requests",
+			},
+		),
+	}
+
 	GRPCServerMetrics = &grpcServerCollectors{
 		CallCount: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -83,6 +118,9 @@ func init() {
 	prometheus.MustRegister(HTTPServerMetrics.RequestCount)
 	prometheus.MustRegister(HTTPServerMetrics.RequestDuration)
 	prometheus.MustRegister(HTTPServerMetrics.ActiveRequests)
+	prometheus.MustRegister(HTTPClientMetrics.RequestCount)
+	prometheus.MustRegister(HTTPClientMetrics.RequestDuration)
+	prometheus.MustRegister(HTTPClientMetrics.ActiveRequests)
 	prometheus.MustRegister(GRPCServerMetrics.CallCount)
 	prometheus.MustRegister(GRPCServerMetrics.CallDuration)
 }

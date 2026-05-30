@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ttuser/pkg/log"
+	"ttuser/pkg/metrics"
 )
 
 type Client struct {
@@ -75,6 +76,8 @@ func (c *Client) Patch(ctx context.Context, url string, body interface{}, opts .
 
 func (c *Client) do(ctx context.Context, method, rawURL string, body interface{}, opts ...RequestOption) (*Response, error) {
 	start := time.Now()
+	metrics.HTTPClientMetrics.ActiveRequests.Inc()
+	defer metrics.HTTPClientMetrics.ActiveRequests.Dec()
 
 	var reqBodyReader io.Reader
 	if body != nil {
@@ -99,7 +102,12 @@ func (c *Client) do(ctx context.Context, method, rawURL string, body interface{}
 
 	resp, err := c.httpClient.Do(req)
 	cost := time.Since(start)
+	host := req.URL.Host
+
 	if err != nil {
+		metrics.HTTPClientMetrics.RequestCount.WithLabelValues(method, host, "error").Inc()
+		metrics.HTTPClientMetrics.RequestDuration.WithLabelValues(method, host).Observe(cost.Seconds())
+
 		log.Error(ctx, "http_client request failed",
 			"method", method,
 			"url", rawURL,
@@ -111,6 +119,9 @@ func (c *Client) do(ctx context.Context, method, rawURL string, body interface{}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
+
+	metrics.HTTPClientMetrics.RequestCount.WithLabelValues(method, host, fmt.Sprintf("%d", resp.StatusCode)).Inc()
+	metrics.HTTPClientMetrics.RequestDuration.WithLabelValues(method, host).Observe(cost.Seconds())
 
 	log.Info(ctx, "http_client",
 		"method", method,
