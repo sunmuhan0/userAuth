@@ -114,10 +114,10 @@ http.GracefulStop(srv, 10*time.Second)
 
 ### 客户端
 
-支持 GET / POST / PUT / DELETE / PATCH，每次请求自动记录日志。
+支持 GET / POST / PUT / DELETE / PATCH，每次请求自动记录日志。建议通过 `Service` 字段标记来源服务，便于 Prometheus 区分指标。
 
 ```go
-cli := http.NewClient()
+cli := http.NewClient(http.ClientOption{Service: "proc", Timeout: 10 * time.Second})
 
 type SMSReq struct {
     Phone    string `json:"phone"`
@@ -134,6 +134,43 @@ if err != nil { return err }
 var result struct { Code string `json:"code"` }
 resp.JSON(&result)
 ```
+
+## Prometheus 指标
+
+服务端和客户端统一在 `/metrics` 端点暴露，所有指标均带 `service` 标签区分来源。
+
+### 服务端指标
+
+| 指标 | 类型 | Labels | 说明 |
+|------|------|--------|------|
+| `ttuser_http_requests_total` | Counter | `service`, `method`, `path`, `status` | HTTP 请求总数 |
+| `ttuser_http_request_duration_seconds` | Histogram | `service`, `method`, `path` | 请求耗时分布 |
+| `ttuser_http_requests_active` | Gauge | - | 当前活跃请求数 |
+
+示例：
+```
+ttuser_http_requests_total{service="proc",method="POST",path="/api/v1/login",status="200"} 1024
+```
+
+### 客户端指标
+
+| 指标 | 类型 | Labels | 说明 |
+|------|------|--------|------|
+| `ttuser_http_client_requests_total` | Counter | `service`, `method`, `host`, `status` | 第三方 API 调用总数 |
+| `ttuser_http_client_request_duration_seconds` | Histogram | `service`, `method`, `host` | 第三方 API 调用耗时 |
+| `ttuser_http_client_requests_active` | Gauge | - | 当前活跃客户端请求数 |
+
+示例（调用短信服务）：
+```
+ttuser_http_client_requests_total{service="proc",method="POST",host="sms.api.aliyun.com",status="200"} 42
+```
+
+### gRPC 指标
+
+| 指标 | 类型 | Labels | 说明 |
+|------|------|--------|------|
+| `ttuser_grpc_calls_total` | Counter | `method`, `status` | gRPC 调用总数 |
+| `ttuser_grpc_call_duration_seconds` | Histogram | `method` | gRPC 调用耗时 |
 
 ## 服务注册发现（Nacos）
 
