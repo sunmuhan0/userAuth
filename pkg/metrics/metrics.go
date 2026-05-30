@@ -48,7 +48,7 @@ func init() {
 				Name:      "http_requests_total",
 				Help:      "Total number of HTTP requests",
 			},
-			[]string{"method", "path", "status"},
+			[]string{"service", "method", "path", "status"},
 		),
 		RequestDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -57,7 +57,7 @@ func init() {
 				Help:      "HTTP request duration in seconds",
 				Buckets:   []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
 			},
-			[]string{"method", "path"},
+			[]string{"service", "method", "path"},
 		),
 		ActiveRequests: prometheus.NewGauge(
 			prometheus.GaugeOpts{
@@ -75,7 +75,7 @@ func init() {
 				Name:      "http_client_requests_total",
 				Help:      "Total number of HTTP client requests",
 			},
-			[]string{"method", "host", "status"},
+			[]string{"service", "method", "host", "status"},
 		),
 		RequestDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -84,7 +84,7 @@ func init() {
 				Help:      "HTTP client request duration in seconds",
 				Buckets:   []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
 			},
-			[]string{"method", "host"},
+			[]string{"service", "method", "host"},
 		),
 		ActiveRequests: prometheus.NewGauge(
 			prometheus.GaugeOpts{

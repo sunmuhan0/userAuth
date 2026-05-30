@@ -15,10 +15,12 @@ import (
 
 type Client struct {
 	httpClient *http.Client
+	service    string
 }
 
 type ClientOption struct {
 	Timeout time.Duration
+	Service string
 }
 
 type Response struct {
@@ -31,12 +33,17 @@ func (r *Response) JSON(v interface{}) error {
 }
 
 func NewClient(opts ...ClientOption) *Client {
+	svc := ""
 	timeout := 30 * time.Second
-	if len(opts) > 0 && opts[0].Timeout > 0 {
-		timeout = opts[0].Timeout
+	if len(opts) > 0 {
+		if opts[0].Timeout > 0 {
+			timeout = opts[0].Timeout
+		}
+		svc = opts[0].Service
 	}
 	return &Client{
 		httpClient: &http.Client{Timeout: timeout},
+		service:    svc,
 	}
 }
 
@@ -105,8 +112,8 @@ func (c *Client) do(ctx context.Context, method, rawURL string, body interface{}
 	host := req.URL.Host
 
 	if err != nil {
-		metrics.HTTPClientMetrics.RequestCount.WithLabelValues(method, host, "error").Inc()
-		metrics.HTTPClientMetrics.RequestDuration.WithLabelValues(method, host).Observe(cost.Seconds())
+		metrics.HTTPClientMetrics.RequestCount.WithLabelValues(c.service, method, host, "error").Inc()
+		metrics.HTTPClientMetrics.RequestDuration.WithLabelValues(c.service, method, host).Observe(cost.Seconds())
 
 		log.Error(ctx, "http_client request failed",
 			"method", method,
@@ -120,8 +127,8 @@ func (c *Client) do(ctx context.Context, method, rawURL string, body interface{}
 
 	respBody, _ := io.ReadAll(resp.Body)
 
-	metrics.HTTPClientMetrics.RequestCount.WithLabelValues(method, host, fmt.Sprintf("%d", resp.StatusCode)).Inc()
-	metrics.HTTPClientMetrics.RequestDuration.WithLabelValues(method, host).Observe(cost.Seconds())
+	metrics.HTTPClientMetrics.RequestCount.WithLabelValues(c.service, method, host, fmt.Sprintf("%d", resp.StatusCode)).Inc()
+	metrics.HTTPClientMetrics.RequestDuration.WithLabelValues(c.service, method, host).Observe(cost.Seconds())
 
 	log.Info(ctx, "http_client",
 		"method", method,

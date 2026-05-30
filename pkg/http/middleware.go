@@ -30,7 +30,7 @@ func traceFilter() gin.HandlerFunc {
 	}
 }
 
-func accessLogFilter() gin.HandlerFunc {
+func accessLogFilter(service string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 
@@ -59,6 +59,7 @@ func accessLogFilter() gin.HandlerFunc {
 		httpStatus := c.Writer.Status()
 
 		data := map[string]interface{}{
+			"service":    service,
 			"path":       c.Request.URL.Path,
 			"method":     c.Request.Method,
 			"UA":         c.GetHeader("User-Agent"),
@@ -83,7 +84,7 @@ func accessLogFilter() gin.HandlerFunc {
 	}
 }
 
-func metricsFilter() gin.HandlerFunc {
+func metricsFilter(service string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		metrics.HTTPServerMetrics.ActiveRequests.Inc()
@@ -98,8 +99,8 @@ func metricsFilter() gin.HandlerFunc {
 			path = "unknown"
 		}
 		duration := time.Since(start).Seconds()
-		metrics.HTTPServerMetrics.RequestCount.WithLabelValues(method, path, fmt.Sprintf("%d", status)).Inc()
-		metrics.HTTPServerMetrics.RequestDuration.WithLabelValues(method, path).Observe(duration)
+		metrics.HTTPServerMetrics.RequestCount.WithLabelValues(service, method, path, fmt.Sprintf("%d", status)).Inc()
+		metrics.HTTPServerMetrics.RequestDuration.WithLabelValues(service, method, path).Observe(duration)
 	}
 }
 

@@ -28,8 +28,8 @@ func New(cfg ServerConfig) *Server {
 	engine := gin.New()
 	engine.Use(gin.Recovery())
 	engine.Use(traceFilter())
-	engine.Use(accessLogFilter())
-	engine.Use(metricsFilter())
+	engine.Use(accessLogFilter(cfg.Name))
+	engine.Use(metricsFilter(cfg.Name))
 
 	engine.GET("/metrics", func(c *gin.Context) {
 		promhttp.Handler().ServeHTTP(c.Writer, c.Request)
